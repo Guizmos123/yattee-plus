@@ -25,6 +25,13 @@ __all__ = [
     "update_fetch_status",
     "upsert_cached_videos",
     "upsert_watched_channels",
+    # feed metadata
+    "cleanup_orphaned_feed_video_metadata",
+    "get_feed_video_metadata",
+    "get_feed_video_metadata_to_refresh",
+    "observe_feed_video_metadata",
+    "record_feed_video_metadata_failure",
+    "upsert_feed_video_metadata",
     # settings
     "get_settings_row",
     "is_basic_auth_enabled",
@@ -81,6 +88,14 @@ from database.repositories.feed import (
     update_fetch_status,
     upsert_cached_videos,
     upsert_watched_channels,
+)
+from database.repositories.feed_metadata import (
+    cleanup_orphaned_feed_video_metadata,
+    get_feed_video_metadata,
+    get_feed_video_metadata_to_refresh,
+    observe_feed_video_metadata,
+    record_feed_video_metadata_failure,
+    upsert_feed_video_metadata,
 )
 from database.repositories.settings import (
     get_settings_row,

@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -14,6 +14,7 @@ import database
 import innertube
 import invidious_proxy
 from converters import parse_relative_time, resolve_invidious_url
+from innertube._video import get_video_localized_metadata, get_video_original_metadata
 from security import is_safe_url_strict
 from settings import get_settings
 from ytdlp_wrapper import YtDlpError, get_channel_info, is_valid_url, run_ytdlp
@@ -21,6 +22,15 @@ from ytdlp_wrapper import YtDlpError, get_channel_info, is_valid_url, run_ytdlp
 logger = logging.getLogger(__name__)
 
 _fetch_task: Optional[asyncio.Task] = None
+
+_METADATA_BUDGET = 30
+_METADATA_CONCURRENCY = 2
+_METADATA_DELAY = 1.0
+_METADATA_TIMEOUT = 20.0
+_METADATA_CYCLE_TIMEOUT = 120.0
+_METADATA_REFRESH = timedelta(days=1)
+_metadata_enrichment_running = False
+_metadata_inflight: set[tuple[str, str, str]] = set()
 
 _FEED_FETCH_ERRORS = (
     YtDlpError,
@@ -95,6 +105,7 @@ def _process_invidious_video(v: dict, channel_id: str, invidious_base: str) -> d
 
     return {
         "video_id": v.get("videoId", ""),
+        "metadata_source": f"invidious:channel:{invidious_base}",
         "title": v.get("title", ""),
         "author": v.get("author", ""),
         "author_id": v.get("authorId", channel_id),
@@ -122,6 +133,7 @@ def _process_ytdlp_video(info: dict, channel_id: str) -> dict:
 
     return {
         "video_id": info.get("id", ""),
+        "metadata_source": "yt-dlp",
         "title": info.get("title", ""),
         "author": info.get("channel") or info.get("uploader") or "",
         "author_id": info.get("channel_id") or info.get("uploader_id") or channel_id,
@@ -159,6 +171,7 @@ def _process_innertube_video(v: dict, channel_id: str) -> dict:
 
     return {
         "video_id": v.get("videoId", ""),
+        "metadata_source": "innertube:browse:en",
         "title": v.get("title", ""),
         "author": v.get("author", ""),
         "author_id": v.get("authorId", channel_id),
@@ -436,7 +449,9 @@ async def _fetch_from_ytdlp(
                     "is_verified": info.get("channel_is_verified", False),
                 }
 
-            videos.append(_process_ytdlp_video(info, channel_id))
+            video = _process_ytdlp_video(info, channel_id)
+            video["metadata_source"] = "yt-dlp:flat" if use_flat_playlist else "yt-dlp:full"
+            videos.append(video)
         except json.JSONDecodeError:
             continue
 
@@ -617,6 +632,7 @@ async def fetch_single_channel(channel_id: str, site: str, channel_url: str):
 
         if videos:
             database.upsert_cached_videos(channel_id, site, videos)
+            _remember_feed_metadata_observations(site, videos)
             database.update_fetch_status(
                 channel_id,
                 site,
@@ -694,6 +710,7 @@ async def fetch_all_channels():
 
             if videos:
                 database.upsert_cached_videos(channel_id, site, videos)
+                _remember_feed_metadata_observations(site, videos)
                 database.update_fetch_status(
                     channel_id,
                     site,
@@ -775,6 +792,121 @@ async def fetch_all_channels():
         )
 
 
+def _remember_feed_metadata_observations(site: str, videos: List[Dict[str, Any]]) -> None:
+    if site != "youtube":
+        return
+    try:
+        database.observe_feed_video_metadata(site, videos)
+    except Exception:
+        # The normal cache has already committed; enrichment must not invalidate it.
+        logger.exception("[Feed] Could not record metadata observations")
+
+
+async def _enrich_feed_metadata_entry(entry: Dict[str, Any]) -> None:
+    video_id, language, site = entry["video_id"], entry["language"], entry["site"]
+    try:
+        acquisition = (
+            get_video_original_metadata(video_id)
+            if language == "original"
+            else get_video_localized_metadata(video_id, language)
+        )
+        metadata = await asyncio.wait_for(acquisition, timeout=_METADATA_TIMEOUT)
+        if not isinstance(metadata, dict) or not any(
+            isinstance(metadata.get(f), str) for f in ("title", "description")
+        ):
+            raise ValueError("No usable metadata returned")
+        source = "innertube:player" if language == "original" else "innertube:next"
+        # Keep missing fields from a previous success, never unverified originals.
+        old = entry if language != "original" or entry.get("source") == source else {}
+        texts = {
+            field: metadata[field] if isinstance(metadata.get(field), str) else old.get(field)
+            for field in ("title", "description")
+        }
+        checked_at = datetime.now(UTC)
+        database.upsert_feed_video_metadata(
+            site,
+            video_id,
+            language,
+            **texts,
+            source=source,
+            checked_at=checked_at,
+            next_check_at=checked_at + _METADATA_REFRESH,
+            observed_title=entry.get("observed_title"),
+            observed_source=entry.get("observed_source"),
+        )
+    except Exception:
+        logger.warning("[Feed] Metadata acquisition failed for %s (%s)", video_id, language, exc_info=True)
+        failures = min(entry.get("failure_count", 0), 7)
+        delay = min(timedelta(minutes=15) * (2**failures), timedelta(days=1))
+        try:
+            database.record_feed_video_metadata_failure(
+                site,
+                video_id,
+                language,
+                next_check_at=datetime.now(UTC) + delay,
+                observed_title=entry.get("observed_title"),
+                observed_source=entry.get("observed_source"),
+            )
+        except Exception:
+            logger.exception("[Feed] Could not record metadata retry")
+
+
+async def enrich_feed_video_metadata() -> None:
+    """Run one bounded pass in the existing periodic task, never in a Feed read.
+
+    Limits count helper acquisitions; the existing InnerTube client owns HTTP
+    retries. Guards apply within this server process, as does the Feed loop.
+    """
+    global _metadata_enrichment_running
+    if _metadata_enrichment_running or not get_settings().innertube_enabled:
+        return
+    _metadata_enrichment_running = True
+    try:
+        now = datetime.now(UTC)
+        candidates = []
+        for language in ("original", "fr", "en"):
+            candidates.extend(
+                database.get_feed_video_metadata_to_refresh(
+                    language,
+                    limit=_METADATA_BUDGET,
+                    now=now,
+                    prioritize_recent=True,
+                )
+            )
+        candidates.sort(
+            key=lambda row: (
+                row.get("checked_at") is not None,
+                -(row.get("published") or 0),
+                -row.get("cache_id", 0),
+                ("original", "fr", "en").index(row["language"]),
+            )
+        )
+        unique = {(row["site"], row["video_id"], row["language"]): row for row in candidates}
+        pending = iter(list(unique.values())[:_METADATA_BUDGET])
+
+        async def worker():
+            for entry in pending:
+                key = (entry["site"], entry["video_id"], entry["language"])
+                if key in _metadata_inflight:
+                    continue
+                _metadata_inflight.add(key)
+                try:
+                    await _enrich_feed_metadata_entry(entry)
+                finally:
+                    _metadata_inflight.discard(key)
+                await asyncio.sleep(_METADATA_DELAY)
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*(worker() for _ in range(_METADATA_CONCURRENCY))),
+                timeout=_METADATA_CYCLE_TIMEOUT,
+            )
+        except TimeoutError:
+            logger.warning("[Feed] Metadata enrichment reached its cycle deadline")
+    finally:
+        _metadata_enrichment_running = False
+
+
 async def feed_fetch_loop():
     """Main loop for periodic feed fetching."""
     while True:
@@ -790,6 +922,11 @@ async def feed_fetch_loop():
 
             # Cleanup orphaned cached videos (channels no longer watched or subscribed)
             database.cleanup_orphaned_cached_videos()
+
+            try:
+                await enrich_feed_video_metadata()
+            except Exception:
+                logger.exception("[Feed] Metadata enrichment failed; synchronized Feed remains available")
 
         except Exception as e:
             logger.error(f"Feed fetch loop error: {e}", exc_info=True)

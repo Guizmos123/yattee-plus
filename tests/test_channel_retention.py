@@ -174,6 +174,7 @@ async def test_background_loop_passes_current_retention_to_cleanup(retention):
     with (
         patch.object(feed_fetcher, "get_settings", return_value=current),
         patch.object(feed_fetcher, "fetch_all_channels", new_callable=AsyncMock),
+        patch.object(feed_fetcher, "enrich_feed_video_metadata", new_callable=AsyncMock),
         patch.object(feed_fetcher.database, "cleanup_old_cached_videos") as old_videos,
         patch.object(feed_fetcher.database, "cleanup_stale_watched_channels") as stale_channels,
         patch.object(feed_fetcher.database, "cleanup_orphaned_cached_videos") as orphaned_videos,
@@ -198,6 +199,7 @@ async def test_background_loop_reads_new_setting_on_next_cycle(test_db):
 
     with (
         patch.object(feed_fetcher, "fetch_all_channels", new_callable=AsyncMock),
+        patch.object(feed_fetcher, "enrich_feed_video_metadata", new_callable=AsyncMock),
         patch.object(feed_fetcher.database, "cleanup_old_cached_videos"),
         patch.object(
             feed_fetcher.database, "cleanup_stale_watched_channels", side_effect=lambda **kw: observed.append(kw)

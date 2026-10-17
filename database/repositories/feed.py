@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional
 
 from database.connection import get_connection
+from database.repositories.feed_metadata import _cleanup_orphaned_feed_video_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,7 @@ def cleanup_old_cached_videos(days: int = 30):
             (f"-{days} days",),
         )
         deleted = cursor.rowcount
+        _cleanup_orphaned_feed_video_metadata(conn)
         conn.commit()
         if deleted > 0:
             logger.info(f"Cleaned up {deleted} old cached videos")
@@ -324,6 +326,7 @@ def cleanup_orphaned_cached_videos() -> int:
             )
         """)
         deleted = cursor.rowcount
+        _cleanup_orphaned_feed_video_metadata(conn)
         conn.commit()
         if deleted > 0:
             logger.info(f"Cleaned up {deleted} orphaned cached videos")

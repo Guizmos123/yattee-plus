@@ -3,9 +3,10 @@
 import asyncio
 import json
 import logging
-from typing import List, Optional
+import sqlite3
+from typing import List, Literal, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 import avatar_cache
@@ -45,6 +46,7 @@ class FeedVideoResponse(BaseModel):
     videoThumbnails: List[dict]
     extractor: str
     videoUrl: Optional[str]
+    description: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
 
 
 # =============================================================================
@@ -106,7 +108,10 @@ class FeedStatusResponse(BaseModel):
 
 
 @router.post("/feed", response_model=StatelessFeedResponse)
-async def post_feed(data: StatelessFeedRequest):
+async def post_feed(
+    data: StatelessFeedRequest,
+    lang: Optional[Literal["original", "fr", "en"]] = Query(default=None),
+):
     """
     Get feed for a list of channels (stateless).
 
@@ -192,9 +197,30 @@ async def post_feed(data: StatelessFeedRequest):
 
     logger.debug(f"Returning {len(videos)} videos (total: {total}) from cached channels")
 
+    stored_metadata = {}
+    if lang is not None:
+        video_ids = [video["video_id"] for video in videos if video["site"] == "youtube"]
+        if video_ids:
+            try:
+                stored_metadata = {
+                    (row["video_id"], row["language"]): row
+                    for row in database.get_feed_video_metadata(video_ids, languages=[lang, "original"])
+                }
+            except sqlite3.Error:
+                logger.exception("[Feed] Stored metadata unavailable; using historical Feed")
+
     # Build response
     feed_videos = []
     for v in videos:
+        texts = {}
+        if lang is not None and v["site"] == "youtube":
+            for language in dict.fromkeys((lang, "original")):
+                variant = stored_metadata.get((v["video_id"], language), {})
+                if language == "original" and variant.get("source") != "innertube:player":
+                    continue
+                for field in ("title", "description"):
+                    if field not in texts and isinstance(variant.get(field), str):
+                        texts[field] = variant[field]
         # Build thumbnail list from stored data
         thumbnails = []
         if v.get("thumbnail_data"):
@@ -211,7 +237,7 @@ async def post_feed(data: StatelessFeedRequest):
         feed_videos.append(
             FeedVideoResponse(
                 videoId=v["video_id"],
-                title=v["title"],
+                title=texts.get("title", v["title"]),
                 author=v["author"] or "",
                 authorId=v["author_id"],
                 lengthSeconds=int(v["length_seconds"] or 0),
@@ -221,6 +247,7 @@ async def post_feed(data: StatelessFeedRequest):
                 videoThumbnails=thumbnails,
                 extractor=v["site"],
                 videoUrl=v["video_url"],
+                description=texts.get("description"),
             )
         )
 
