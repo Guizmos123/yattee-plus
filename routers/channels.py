@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import Optional
+from typing import Literal, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -19,6 +19,7 @@ from converters import (
     ytdlp_to_playlist_list_item,
     ytdlp_to_video_list_item,
 )
+from innertube._localization import _apply_stored_list_metadata
 from models import (
     ChannelMetadataRequest,
     ChannelPlaylistsResponse,
@@ -209,7 +210,9 @@ async def get_channel(channel_id: str):
 
 @router.get("/channels/{channel_id}/videos", response_model=ChannelVideosResponse)
 async def get_channel_videos_endpoint(
-    channel_id: str, continuation: Optional[str] = Query(None, description="Continuation token for pagination")
+    channel_id: str,
+    continuation: Optional[str] = Query(None, description="Continuation token for pagination"),
+    lang: Optional[Literal["original", "fr", "en"]] = Query(None),
 ):
     """Get channel videos (Invidious-compatible)."""
     # Convert continuation to page number for yt-dlp (which uses page-based pagination)
@@ -220,9 +223,13 @@ async def get_channel_videos_endpoint(
     if _is_youtube_channel_id(channel_id):
         # Try InnerTube first
         try:
-            data = await innertube.get_channel_videos(channel_id, continuation)
+            language = lang if lang in ("fr", "en") else None
+            options = {"language": language} if language else {}
+            data = await innertube.get_channel_videos(channel_id, continuation, **options)
             if data and data.get("videos"):
-                video_items = [invidious_to_video_list_item(v) for v in data["videos"]]
+                video_items = [
+                    invidious_to_video_list_item(v) for v in _apply_stored_list_metadata(data["videos"], language)
+                ]
                 return ChannelVideosResponse(videos=video_items, continuation=data.get("continuation"))
         except innertube.InnerTubeError as e:
             logger.debug(f"[Channels] InnerTube channel videos error for {channel_id}: {e}")
@@ -415,9 +422,12 @@ async def get_channel_playlists_endpoint(
 
 @router.get("/channels/{channel_id}/shorts", response_model=ChannelShortsResponse)
 async def get_channel_shorts_endpoint(
-    channel_id: str, continuation: Optional[str] = Query(None, description="Continuation token for pagination")
+    channel_id: str,
+    continuation: Optional[str] = Query(None, description="Continuation token for pagination"),
+    lang: Optional[Literal["original", "fr", "en"]] = Query(None),
 ):
     """Get channel shorts (Invidious-compatible)."""
+
     # Every item from this endpoint is a short by construction — tag it regardless
     # of the source so clients can rely on `isShort` even from the yt-dlp fallback.
     def _tag(items):
@@ -427,9 +437,13 @@ async def get_channel_shorts_endpoint(
 
     # Try InnerTube first
     try:
-        data = await innertube.get_channel_shorts(channel_id, continuation)
+        language = lang if lang in ("fr", "en") and _is_youtube_channel_id(channel_id) else None
+        options = {"language": language} if language else {}
+        data = await innertube.get_channel_shorts(channel_id, continuation, **options)
         if data and data.get("videos"):
-            video_items = _tag([invidious_to_video_list_item(v) for v in data["videos"]])
+            video_items = _tag(
+                [invidious_to_video_list_item(v) for v in _apply_stored_list_metadata(data["videos"], language)]
+            )
             return ChannelShortsResponse(videos=video_items, continuation=data.get("continuation"))
     except innertube.InnerTubeError as e:
         logger.debug(f"[Channels] InnerTube channel shorts error for {channel_id}: {e}")
@@ -507,6 +521,7 @@ async def search_channel_endpoint(
     channel_id: str,
     q: str = Query(..., description="Search query"),
     page: int = Query(1, ge=1, description="Page number"),
+    lang: Optional[Literal["original", "fr", "en"]] = Query(None),
 ):
     """Search for videos within a channel (Invidious-compatible).
 
@@ -525,11 +540,18 @@ async def search_channel_endpoint(
     if _is_youtube_channel_id(channel_id):
         # Try InnerTube first
         try:
-            data = await innertube.search_channel(channel_id, q, page)
+            language = lang if lang in ("fr", "en") else None
+            options = {"language": language} if language else {}
+            data = await innertube.search_channel(channel_id, q, page, **options)
             if data and data.get("videos"):
-                video_items = [invidious_to_video_list_item(v) for v in data["videos"]]
+                video_items = [
+                    invidious_to_video_list_item(v) for v in _apply_stored_list_metadata(data["videos"], language)
+                ]
                 return ChannelSearchResponse(
-                    videos=video_items, continuation=str(page + 1) if video_items else None
+                    videos=video_items,
+                    continuation=str(page + 1)
+                    if video_items and (language is None or data.get("continuation"))
+                    else None,
                 )
         except innertube.InnerTubeError as e:
             logger.debug(f"[Channels] InnerTube channel search error for {channel_id}: {e}")

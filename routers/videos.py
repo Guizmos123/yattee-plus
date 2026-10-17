@@ -245,14 +245,22 @@ async def _select_video_metadata(
 
     Omitted lang and forced Invidious preserve the complete historical response.
     Unavailable fields retain historical text without claiming it is original.
-    Playback, authors and recommendations are never changed here.
+    Playback and authors are never changed here. Only hybrid recommendations
+    can receive text from the same localized /next lookup, matched by videoId.
     """
     if lang is None or invidious_only or not innertube.is_enabled():
         return response
 
+    localize_recommendations = (
+        lang in ("fr", "en")
+        and getattr(response, "extractionMethod", None) == "hybrid"
+        and bool(response.recommendedVideos)
+    )
     try:
         if lang == "original":
             metadata = await get_video_original_metadata(video_id)
+        elif localize_recommendations:
+            metadata = await get_video_localized_metadata(video_id, lang, include_recommendations=True)
         else:
             metadata = await get_video_localized_metadata(video_id, lang)
     except (InnerTubeError, AttributeError, TypeError, ValueError) as error:
@@ -268,6 +276,18 @@ async def _select_video_metadata(
         description = metadata["description"]
         updates["description"] = description
         updates["descriptionHtml"] = escape(description).replace("\n", "<br>")
+    recommendations = metadata.get("recommendedVideos")
+    if localize_recommendations and isinstance(recommendations, dict) and recommendations:
+        selected = []
+        for video in response.recommendedVideos:
+            texts = recommendations.get(video.videoId)
+            text_updates = (
+                {field: texts[field] for field in ("title", "description") if isinstance(texts.get(field), str)}
+                if isinstance(texts, dict)
+                else {}
+            )
+            selected.append(video.model_copy(update=text_updates) if text_updates else video)
+        updates["recommendedVideos"] = selected
     return response.model_copy(update=updates) if updates else response
 
 

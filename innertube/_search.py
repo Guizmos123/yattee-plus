@@ -12,11 +12,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from innertube._client import InnerTubeError, innertube_post
 from innertube._converters import (
+    _localize_list_video,
+    _lockup_video_view_model_to_invidious,
     channel_renderer_to_invidious,
     lockup_view_model_to_invidious,
     playlist_renderer_to_invidious,
     video_renderer_to_invidious,
 )
+from innertube._localization import _language_body
 from innertube._playlists import _extract_continuation_token
 
 logger = logging.getLogger("innertube")
@@ -32,6 +35,7 @@ _MAX_PAGE_WALK = 50
 
 # Key: (query, search_type, sort, date, duration, page) where `page` is the page
 # that was just returned; the stored token fetches `page + 1`.
+# Localized requests insert (language, 'US') before page; historical keys stay unchanged.
 _continuation_cache: Dict[Tuple[Any, ...], Tuple[str, float]] = {}
 
 
@@ -95,20 +99,25 @@ def _build_search_params(
     return base64.b64encode(data).decode() if data else None
 
 
-def _parse_result_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _parse_result_item(item: Dict[str, Any], *, localized: bool = False) -> Optional[Dict[str, Any]]:
     """Convert a single search result item to Invidious format, or None if unsupported."""
     if "videoRenderer" in item:
-        return video_renderer_to_invidious(item["videoRenderer"])
+        return _localize_list_video(item, video_renderer_to_invidious(item["videoRenderer"]), localized=localized)
     if "channelRenderer" in item:
         return channel_renderer_to_invidious(item["channelRenderer"])
     if "playlistRenderer" in item:
         return playlist_renderer_to_invidious(item["playlistRenderer"])
     if "lockupViewModel" in item:
+        if localized and item["lockupViewModel"].get("contentType") == "LOCKUP_CONTENT_TYPE_VIDEO":
+            converted = _lockup_video_view_model_to_invidious(item["lockupViewModel"])
+            return _localize_list_video(item, converted, localized=True) if converted else None
         return lockup_view_model_to_invidious(item["lockupViewModel"])
     return None
 
 
-def _parse_search_results(data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+def _parse_search_results(
+    data: Dict[str, Any], *, localized: bool = False
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
     """Parse mixed search results and continuation token from an InnerTube search response.
 
     Handles both the initial-response shape (sectionListRenderer) and the
@@ -128,7 +137,7 @@ def _parse_search_results(data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], O
     for section in sections:
         if "itemSectionRenderer" in section:
             for item in section["itemSectionRenderer"].get("contents", []):
-                converted = _parse_result_item(item)
+                converted = _parse_result_item(item, localized=localized)
                 if converted:
                     results.append(converted)
         elif "continuationItemRenderer" in section:
@@ -142,29 +151,39 @@ def _parse_search_results(data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], O
         for item in append.get("continuationItems", []):
             if "itemSectionRenderer" in item:
                 for content in item["itemSectionRenderer"].get("contents", []):
-                    converted = _parse_result_item(content)
+                    converted = _parse_result_item(content, localized=localized)
                     if converted:
                         results.append(converted)
             elif "continuationItemRenderer" in item:
                 token = _extract_continuation_token(item["continuationItemRenderer"])
                 if token:
                     continuation = token
+            elif localized:
+                converted = _parse_result_item(item, localized=True)
+                if converted:
+                    results.append(converted)
 
     return results, continuation
 
 
 async def _fetch_initial(
-    query: str, search_type: str, sort: Optional[str], date: Optional[str], duration: Optional[str]
+    query: str,
+    search_type: str,
+    sort: Optional[str],
+    date: Optional[str],
+    duration: Optional[str],
+    *,
+    language: Optional[str] = None,
 ) -> Dict[str, Any]:
     body: Dict[str, Any] = {"query": query}
     params = _build_search_params(search_type=search_type, sort=sort, date=date, duration=duration)
     if params:
         body["params"] = params
-    return await innertube_post("search", body)
+    return await innertube_post("search", await _language_body(body, language))
 
 
-async def _fetch_continuation(token: str) -> Dict[str, Any]:
-    return await innertube_post("search", {"continuation": token})
+async def _fetch_continuation(token: str, *, language: Optional[str] = None) -> Dict[str, Any]:
+    return await innertube_post("search", await _language_body({"continuation": token}, language))
 
 
 async def _walk_to_page(
@@ -175,13 +194,16 @@ async def _walk_to_page(
     date: Optional[str],
     duration: Optional[str],
     target_page: int,
+    *,
+    language: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Walk page 1 → target_page via sequential continuations, caching each token.
 
     Returns the results of `target_page`, or [] if we run out of tokens before getting there.
     """
-    data = await _fetch_initial(query, search_type, sort, date, duration)
-    results, token = _parse_search_results(data)
+    options = {"language": language} if language is not None else {}
+    data = await _fetch_initial(query, search_type, sort, date, duration, **options)
+    results, token = _parse_search_results(data, localized=language is not None)
     if token:
         _cache_set((*prefix, 1), token)
 
@@ -190,11 +212,11 @@ async def _walk_to_page(
         if not token:
             return []
         try:
-            data = await _fetch_continuation(token)
+            data = await _fetch_continuation(token, **options)
         except InnerTubeError as e:
             logger.info(f"[InnerTube] Search walk failed at page {current_page + 1}: {e}")
             return []
-        results, next_token = _parse_search_results(data)
+        results, next_token = _parse_search_results(data, localized=language is not None)
         current_page += 1
         if next_token:
             _cache_set((*prefix, current_page), next_token)
@@ -212,6 +234,8 @@ async def search(
     sort: Optional[str] = None,
     date: Optional[str] = None,
     duration: Optional[str] = None,
+    *,
+    language: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Search YouTube via InnerTube with continuation-based pagination.
 
@@ -230,10 +254,13 @@ async def search(
         return []
 
     prefix: Tuple[Any, ...] = (query, search_type, sort, date, duration)
+    options = {"language": language} if language is not None else {}
+    if language is not None:
+        prefix = (*prefix, language, "US")
 
     if page == 1:
-        data = await _fetch_initial(query, search_type, sort, date, duration)
-        results, token = _parse_search_results(data)
+        data = await _fetch_initial(query, search_type, sort, date, duration, **options)
+        results, token = _parse_search_results(data, localized=language is not None)
         if token:
             _cache_set((*prefix, 1), token)
         logger.info(f"[InnerTube] Search q={query} type={search_type} page=1: {len(results)} results")
@@ -242,13 +269,11 @@ async def search(
     cached = _cache_get((*prefix, page - 1))
     if cached:
         try:
-            data = await _fetch_continuation(cached)
-            results, next_token = _parse_search_results(data)
+            data = await _fetch_continuation(cached, **options)
+            results, next_token = _parse_search_results(data, localized=language is not None)
             if next_token:
                 _cache_set((*prefix, page), next_token)
-            logger.info(
-                f"[InnerTube] Search q={query} type={search_type} page={page} (cached): {len(results)} results"
-            )
+            logger.info(f"[InnerTube] Search q={query} type={search_type} page={page} (cached): {len(results)} results")
             return results
         except InnerTubeError as e:
             if e.status_code and 400 <= e.status_code < 500:
@@ -257,13 +282,13 @@ async def search(
             else:
                 raise
 
-    results = await _walk_to_page(prefix, query, search_type, sort, date, duration, page)
+    results = await _walk_to_page(prefix, query, search_type, sort, date, duration, page, **options)
     logger.info(f"[InnerTube] Search q={query} type={search_type} page={page} (walk): {len(results)} results")
     return results
 
 
 async def search_channel(
-    channel_id: str, query: str, page: int = 1
+    channel_id: str, query: str, page: int = 1, *, language: Optional[str] = None
 ) -> Dict[str, Any]:
     """Search for videos within a channel.
 
@@ -278,6 +303,8 @@ async def search_channel(
     Returns:
         Dict with "videos" list and optional "continuation" token
     """
+    if language is not None and not 1 <= page <= _MAX_PAGE_WALK:
+        return {"videos": [], "continuation": None}
     encoded_query = urllib.parse.quote(query)
 
     # Step 1: Resolve the channel search URL to get browse params
@@ -286,7 +313,7 @@ async def search_channel(
     else:
         search_url = f"https://www.youtube.com/channel/{channel_id}/search?query={encoded_query}"
 
-    resolve_data = await innertube_post("navigation/resolve_url", {"url": search_url})
+    resolve_data = await innertube_post("navigation/resolve_url", await _language_body({"url": search_url}, language))
 
     browse_endpoint = resolve_data.get("endpoint", {}).get("browseEndpoint", {})
     browse_id = browse_endpoint.get("browseId", channel_id)
@@ -297,7 +324,9 @@ async def search_channel(
         return {"videos": [], "continuation": None}
 
     # Step 2: Browse with the resolved params to load the channel page with search tab
-    browse_data = await innertube_post("browse", {"browseId": browse_id, "params": params})
+    browse_data = await innertube_post(
+        "browse", await _language_body({"browseId": browse_id, "params": params}, language)
+    )
 
     # Step 3: Find the search tab's continuation token and fetch results
     tabs = browse_data.get("contents", {}).get("twoColumnBrowseResultsRenderer", {}).get("tabs", [])
@@ -311,27 +340,33 @@ async def search_channel(
         content = renderer.get("content", {})
         sl = content.get("sectionListRenderer", {})
         if sl:
-            videos, continuation = _parse_search_sections(sl.get("contents", []))
+            videos, continuation = _parse_search_sections(sl.get("contents", []), localized=language is not None)
             if videos:
                 logger.info(f"[InnerTube] Channel search {channel_id} q={query}: {len(videos)} results")
-                return {"videos": videos, "continuation": continuation}
+                return await _channel_search_page(videos, continuation, page, language)
 
         # If tab content is empty, check for a continuation in the tab's endpoint
         tab_endpoint = renderer.get("endpoint", {}).get("browseEndpoint", {})
         tab_params = tab_endpoint.get("params")
         if tab_params and tab_params != params:
             # Fetch the search tab content with its own params
-            tab_data = await innertube_post("browse", {"browseId": browse_id, "params": tab_params, "query": query})
+            tab_data = await innertube_post(
+                "browse",
+                await _language_body(
+                    {"browseId": browse_id, "params": tab_params, "query": query},
+                    language,
+                ),
+            )
 
             # Check onResponseReceivedActions (continuation-loaded results)
             for action in tab_data.get("onResponseReceivedActions", []):
                 append = action.get("appendContinuationItemsAction", {})
                 items = append.get("continuationItems", [])
                 if items:
-                    videos, continuation = _parse_continuation_items(items)
+                    videos, continuation = _parse_continuation_items(items, localized=language is not None)
                     if videos:
                         logger.info(f"[InnerTube] Channel search {channel_id} q={query}: {len(videos)} results")
-                        return {"videos": videos, "continuation": continuation}
+                        return await _channel_search_page(videos, continuation, page, language)
 
             # Also check tab content in the response
             tabs2 = tab_data.get("contents", {}).get("twoColumnBrowseResultsRenderer", {}).get("tabs", [])
@@ -340,18 +375,33 @@ async def search_channel(
                 if r2.get("selected"):
                     sl2 = r2.get("content", {}).get("sectionListRenderer", {})
                     if sl2:
-                        videos, continuation = _parse_search_sections(sl2.get("contents", []))
+                        videos, continuation = _parse_search_sections(
+                            sl2.get("contents", []), localized=language is not None
+                        )
                         if videos:
-                            logger.info(
-                                f"[InnerTube] Channel search {channel_id} q={query}: {len(videos)} results"
-                            )
-                            return {"videos": videos, "continuation": continuation}
+                            logger.info(f"[InnerTube] Channel search {channel_id} q={query}: {len(videos)} results")
+                            return await _channel_search_page(videos, continuation, page, language)
 
     logger.debug(f"[InnerTube] Channel search {channel_id} q={query}: no results found in response")
     return {"videos": [], "continuation": None}
 
 
-def _parse_search_sections(sections: list) -> tuple[list, str | None]:
+async def _channel_search_page(videos: list, token: Optional[str], page: int, language: Optional[str]) -> dict:
+    # Keep the legacy page behavior untouched; localized requests follow the
+    # actual browse continuations instead of returning page one repeatedly.
+    if language is not None:
+        for _ in range(1, page):
+            if not token:
+                return {"videos": [], "continuation": None}
+            data = await innertube_post("browse", await _language_body({"continuation": token}, language))
+            items = []
+            for action in data.get("onResponseReceivedActions", []) + data.get("onResponseReceivedCommands", []):
+                items.extend(action.get("appendContinuationItemsAction", {}).get("continuationItems", []))
+            videos, token = _parse_continuation_items(items, localized=True)
+    return {"videos": videos, "continuation": token}
+
+
+def _parse_search_sections(sections: list, *, localized: bool = False) -> tuple[list, str | None]:
     """Parse video results from sectionListRenderer contents."""
     videos = []
     continuation = None
@@ -359,8 +409,14 @@ def _parse_search_sections(sections: list) -> tuple[list, str | None]:
     for section in sections:
         isr = section.get("itemSectionRenderer", {})
         for item in isr.get("contents", []):
-            if "videoRenderer" in item:
-                videos.append(video_renderer_to_invidious(item["videoRenderer"]))
+            if localized:
+                converted = _parse_result_item(item, localized=True)
+                if converted and converted.get("type", "video") == "video":
+                    videos.append(converted)
+            elif "videoRenderer" in item:
+                videos.append(
+                    _localize_list_video(item, video_renderer_to_invidious(item["videoRenderer"]), localized=localized)
+                )
 
         if "continuationItemRenderer" in section:
             token = (
@@ -375,7 +431,7 @@ def _parse_search_sections(sections: list) -> tuple[list, str | None]:
     return videos, continuation
 
 
-def _parse_continuation_items(items: list) -> tuple[list, str | None]:
+def _parse_continuation_items(items: list, *, localized: bool = False) -> tuple[list, str | None]:
     """Parse video results from continuation items."""
     videos = []
     continuation = None
@@ -384,10 +440,22 @@ def _parse_continuation_items(items: list) -> tuple[list, str | None]:
         if "itemSectionRenderer" in item:
             isr = item["itemSectionRenderer"]
             for content in isr.get("contents", []):
-                if "videoRenderer" in content:
-                    videos.append(video_renderer_to_invidious(content["videoRenderer"]))
+                if localized:
+                    converted = _parse_result_item(content, localized=True)
+                    if converted and converted.get("type", "video") == "video":
+                        videos.append(converted)
+                elif "videoRenderer" in content:
+                    videos.append(
+                        _localize_list_video(
+                            content,
+                            video_renderer_to_invidious(content["videoRenderer"]),
+                            localized=localized,
+                        )
+                    )
         elif "videoRenderer" in item:
-            videos.append(video_renderer_to_invidious(item["videoRenderer"]))
+            videos.append(
+                _localize_list_video(item, video_renderer_to_invidious(item["videoRenderer"]), localized=localized)
+            )
         elif "continuationItemRenderer" in item:
             token = (
                 item["continuationItemRenderer"]
@@ -397,5 +465,9 @@ def _parse_continuation_items(items: list) -> tuple[list, str | None]:
             )
             if token:
                 continuation = token
+        elif localized:
+            converted = _parse_result_item(item, localized=True)
+            if converted and converted.get("type", "video") == "video":
+                videos.append(converted)
 
     return videos, continuation

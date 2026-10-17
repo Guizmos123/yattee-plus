@@ -8,13 +8,19 @@ deciphered URLs from yt-dlp by itag via `merge_stream_urls`.
 
 import asyncio
 import logging
+from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
 from cachetools import TTLCache
 
 from converters._helpers import _xtags_from_url
 from innertube._client import InnerTubeError, _build_context, _get_client_version, innertube_post
-from innertube._converters import _metadata_from_next, _parse_storyboard_spec, innertube_player_to_invidious_video
+from innertube._converters import (
+    _metadata_from_next,
+    _parse_storyboard_spec,
+    _recommended_metadata_from_next,
+    innertube_player_to_invidious_video,
+)
 
 logger = logging.getLogger("innertube")
 
@@ -51,21 +57,31 @@ def reset_localized_metadata_cache() -> None:
     _localized_metadata_cache = None
 
 
-async def get_video_localized_metadata(video_id: str, language: str) -> Dict[str, Optional[str]]:
+async def get_video_localized_metadata(
+    video_id: str, language: str, *, include_recommendations: bool = False
+) -> Dict[str, Any]:
     """Request /next text in French or English without touching playback data.
 
     YouTube can return original text when no localization is available; hl is
     a preference, not proof of the returned language. Missing/malformed data or
     InnerTube failures return None fields without caching the failed lookup.
     Explicit empty strings are preserved and cached. Every return is a fresh
-    dict so callers cannot modify a cached entry.
+    dict so callers cannot modify a cached entry. Recommendation text from the
+    same response is retained in the existing language cache, and optionally
+    returned by videoId; requesting it never triggers another acquisition.
     """
     if language not in ("fr", "en"):
         raise ValueError("Localized metadata language must be 'fr' or 'en'")
 
     from settings import get_settings
 
-    missing: Dict[str, Optional[str]] = {"title": None, "description": None}
+    def selected(metadata: dict) -> Dict[str, Any]:
+        result: Dict[str, Any] = {"title": metadata.get("title"), "description": metadata.get("description")}
+        if include_recommendations:
+            result["recommendedVideos"] = deepcopy(metadata.get("recommendedVideos", {}))
+        return result
+
+    missing = selected({})
     if not get_settings().innertube_enabled:
         return missing
 
@@ -73,7 +89,7 @@ async def get_video_localized_metadata(video_id: str, language: str) -> Dict[str
     cache_key = (video_id, language)
     cached = cache.get(cache_key)
     if cached is not None:
-        return cached.copy()
+        return selected(cached)
 
     try:
         version = await _get_client_version()
@@ -82,14 +98,15 @@ async def get_video_localized_metadata(video_id: str, language: str) -> Dict[str
             "context": _build_context(language=language, client_version=version),
         }
         data = await innertube_post("next", body)
-        metadata = _metadata_from_next(data)
+        metadata: Dict[str, Any] = _metadata_from_next(data)
+        metadata["recommendedVideos"] = _recommended_metadata_from_next(data)
     except (InnerTubeError, AttributeError, TypeError, ValueError) as error:
         logger.warning("[InnerTube] Localized metadata failed for %s (%s): %s", video_id, language, error)
         return missing
 
-    if any(value is not None for value in metadata.values()):
-        cache[cache_key] = metadata.copy()
-    return metadata
+    if metadata["title"] is not None or metadata["description"] is not None or metadata["recommendedVideos"]:
+        cache[cache_key] = deepcopy(metadata)
+    return selected(metadata)
 
 
 async def get_video_original_metadata(video_id: str) -> Dict[str, Optional[str]]:

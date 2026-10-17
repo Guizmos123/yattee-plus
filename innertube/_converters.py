@@ -7,6 +7,7 @@ so the existing `invidious_to_video_list_item()` etc. converters can be reused.
 import base64
 import logging
 import re
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -24,6 +25,146 @@ def _extract_text(obj: Any) -> str:
     if "runs" in obj:
         return "".join(run.get("text", "") for run in obj["runs"])
     return ""
+
+
+def _optional_list_text(value: Any) -> Optional[str]:
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, dict):
+        return None
+    for key in ("simpleText", "content"):
+        if isinstance(value.get(key), str):
+            return value[key]
+    runs = value.get("runs")
+    if isinstance(runs, list) and all(isinstance(run, dict) and isinstance(run.get("text"), str) for run in runs):
+        return "".join(run["text"] for run in runs)
+    return None
+
+
+def _list_description(renderer: dict) -> Optional[str]:
+    for key in ("descriptionSnippet", "description"):
+        text = _optional_list_text(renderer.get(key))
+        if text is not None:
+            return text
+    snippets = renderer.get("detailedMetadataSnippets")
+    if isinstance(snippets, list):
+        texts = [_optional_list_text(row.get("snippetText")) for row in snippets if isinstance(row, dict)]
+        texts = [text for text in texts if text is not None]
+        if texts:
+            return "\n".join(texts)
+    return None
+
+
+def _localized_view_count(text: str) -> Optional[int]:
+    normalized = " ".join(text.lower().split())
+    if normalized in ("no views", "aucune vue", "aucune vues"):
+        return 0
+    match = re.search(
+        r"(\d[\d\s.,]*?)\s*(milliers?|millions?|milliards?|md|[kmb])?\s*(?:de\s+)?(?:views?|vues?)\b",
+        normalized,
+    )
+    if not match:
+        return None
+    number, suffix = match.groups()
+    number = number.replace(" ", "")
+    if suffix:
+        if "," in number and "." in number:
+            decimal, grouping = (",", ".") if number.rfind(",") > number.rfind(".") else (".", ",")
+            number = number.replace(grouping, "").replace(decimal, ".")
+        else:
+            number = number.replace(",", ".")
+    else:
+        number = number.replace(",", "").replace(".", "")
+    multiplier = 1
+    if suffix:
+        multiplier = 1000 if suffix == "k" or suffix.startswith("millier") else 1_000_000
+        if suffix in ("b", "md") or suffix.startswith("milliard"):
+            multiplier = 1_000_000_000
+    try:
+        return int(float(number) * multiplier)
+    except (ValueError, OverflowError):
+        return None
+
+
+def _localized_published(text: str) -> Optional[int]:
+    normalized = " ".join(text.lower().split())
+    french = re.search(
+        r"il y a (\d+|un|une)\s+(secondes?|minutes?|heures?|jours?|semaines?|mois|ans?|années?)\b", normalized
+    )
+    english = re.search(r"(\d+|an?|one)\s+(seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago\b", normalized)
+    match = french or english
+    if not match:
+        return None
+    number, unit = match.groups()
+    units = {
+        "seconde": 1,
+        "second": 1,
+        "minute": 60,
+        "heure": 3600,
+        "hour": 3600,
+        "jour": 86400,
+        "day": 86400,
+        "semaine": 604800,
+        "week": 604800,
+        "mois": 2592000,
+        "month": 2592000,
+        "an": 31536000,
+        "année": 31536000,
+        "year": 31536000,
+    }
+    multiplier = units.get(unit, units.get(unit.rstrip("s")))
+    if multiplier is None:
+        return None
+    return int(time.time()) - (int(number) if number.isdigit() else 1) * multiplier
+
+
+def _localize_list_video(raw_item: dict, converted: dict, *, localized: bool = False) -> dict:
+    """Correct FR/EN list fields without changing historical/shared converters."""
+    if not localized or converted.get("type", "video") != "video":
+        return converted
+    wrapper = raw_item.get("richItemRenderer", raw_item)
+    wrapper = wrapper.get("content", wrapper)
+    renderer = next(
+        (
+            wrapper[key]
+            for key in (
+                "videoRenderer",
+                "gridVideoRenderer",
+                "lockupViewModel",
+                "reelItemRenderer",
+                "shortsLockupViewModel",
+            )
+            if isinstance(wrapper.get(key), dict)
+        ),
+        {},
+    )
+    result = {**converted, "description": _list_description(renderer)}
+    metadata = renderer.get("metadata", {}).get("lockupMetadataViewModel", {})
+    rows = metadata.get("metadata", {}).get("contentMetadataViewModel", {}).get("metadataRows", [])
+    texts = [part.get("text", {}).get("content", "") for row in rows for part in row.get("metadataParts", [])]
+    texts.extend(
+        text
+        for text in (
+            _optional_list_text(renderer.get("viewCountText")),
+            _optional_list_text(renderer.get("publishedTimeText")),
+            converted.get("viewCountText"),
+            converted.get("publishedText"),
+        )
+        if isinstance(text, str)
+    )
+    for text in texts:
+        if not isinstance(text, str):
+            continue
+        count = _localized_view_count(text)
+        published = _localized_published(text)
+        if count is not None:
+            result.update(viewCount=count, viewCountText=text)
+        if published is not None:
+            result.update(published=published, publishedText=text)
+        # A metrics-only first lockup row is not a channel name.
+        if (count is not None or published is not None) and not result.get("authorId") and result.get("author") == text:
+            result["author"] = ""
+    return result
 
 
 def _extract_thumbnails(obj: Any) -> List[Dict[str, Any]]:
@@ -996,6 +1137,53 @@ def _like_count_from_next(nxt: Dict[str, Any]) -> Optional[int]:
                 if parsed:
                     return parsed
     return None
+
+
+def _recommended_metadata_from_next(nxt: Any) -> Dict[str, Dict[str, Optional[str]]]:
+    """Read only recommendation text, without defaulting absent fields to empty.
+
+    Follow the same sidebar shapes as _recommended_videos_from_next. Never
+    interpret channel/playlist lockups or unrelated text as video metadata.
+    """
+    secondary = nxt
+    for key in ("contents", "twoColumnWatchNextResults", "secondaryResults", "secondaryResults", "results"):
+        secondary = secondary.get(key) if isinstance(secondary, dict) else None
+    pending = list(secondary) if isinstance(secondary, list) else []
+    out: Dict[str, Dict[str, Optional[str]]] = {}
+    for item in pending:
+        if not isinstance(item, dict):
+            continue
+        section = item.get("itemSectionRenderer")
+        if isinstance(section, dict) and isinstance(section.get("contents"), list):
+            pending.extend(section["contents"])
+
+        renderer = item.get("compactVideoRenderer")
+        if isinstance(renderer, dict):
+            video_id = renderer.get("videoId")
+            title = _optional_list_text(renderer.get("title"))
+            description = _list_description(renderer)
+        else:
+            renderer = item.get("lockupViewModel")
+            if not isinstance(renderer, dict):
+                continue
+            if renderer.get("contentType") not in (None, "", "LOCKUP_CONTENT_TYPE_VIDEO"):
+                continue
+            video_id = renderer.get("contentId")
+            metadata = renderer.get("metadata")
+            metadata = metadata.get("lockupMetadataViewModel") if isinstance(metadata, dict) else None
+            metadata = metadata if isinstance(metadata, dict) else {}
+            title = _optional_list_text(metadata.get("title"))
+            description = _list_description(renderer)
+            if description is None:
+                description = _list_description(metadata)
+
+        if not isinstance(video_id, str) or not video_id:
+            continue
+        texts = out.setdefault(video_id, {"title": None, "description": None})
+        for field, value in (("title", title), ("description", description)):
+            if texts[field] is None:
+                texts[field] = value
+    return out
 
 
 def _recommended_videos_from_next(nxt: Dict[str, Any]) -> List[Dict[str, Any]]:

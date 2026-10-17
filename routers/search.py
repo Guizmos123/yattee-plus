@@ -1,7 +1,7 @@
 """Search endpoints."""
 
 import logging
-from typing import List, Optional, Union
+from typing import List, Literal, Optional, Union
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -13,6 +13,7 @@ from converters import (
     invidious_to_video_list_item,
     ytdlp_to_video_list_item,
 )
+from innertube._localization import _apply_stored_list_metadata
 from models import ChannelListItem, PlaylistListItem, VideoListItem
 from settings import get_settings
 from ytdlp_wrapper import YtDlpError, search_videos
@@ -58,6 +59,7 @@ async def search(
     date: Optional[str] = Query(None, description="Upload date: hour, today, week, month, year"),
     duration: Optional[str] = Query(None, description="Duration: short, medium, long"),
     type: Optional[str] = Query("video", description="Result type: video, channel, playlist, or all"),
+    lang: Optional[Literal["original", "fr", "en"]] = Query(None),
 ) -> List[Union[VideoListItem, ChannelListItem, PlaylistListItem]]:
     """Search for videos, channels, or playlists (Invidious-compatible)."""
     if not q.strip():
@@ -67,8 +69,13 @@ async def search(
 
     # Step 1: Try InnerTube
     try:
-        results = await innertube.search(q, search_type=search_type, page=page, sort=sort, date=date, duration=duration)
+        language = lang if lang in ("fr", "en") else None
+        options = {"language": language} if language else {}
+        results = await innertube.search(
+            q, search_type=search_type, page=page, sort=sort, date=date, duration=duration, **options
+        )
         if results:
+            results = _apply_stored_list_metadata(results, language)
             return [_convert_innertube_item(item) for item in results]
     except innertube.InnerTubeError as e:
         logger.debug(f"[Search] InnerTube search error: {e}")

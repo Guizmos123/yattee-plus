@@ -8,12 +8,14 @@ from typing import Any, Dict, List, Optional
 
 from innertube._client import InnerTubeError, _build_context, _get_client_version, innertube_post
 from innertube._converters import (
+    _localize_list_video,
     _parse_count_text,
     grid_playlist_to_invidious,
     grid_video_to_invidious,
     rich_item_to_invidious,
     video_renderer_to_invidious,
 )
+from innertube._localization import _language_body
 
 logger = logging.getLogger("innertube")
 
@@ -41,7 +43,7 @@ TRENDING_BROWSE_PARAMS = {
 _handle_cache: Dict[str, str] = {}
 
 
-async def _resolve_browse_id(channel_id: str) -> str:
+async def _resolve_browse_id(channel_id: str, *, language: Optional[str] = None) -> str:
     """Resolve a channel handle (@name) to a UC... browse ID.
 
     YouTube's /browse endpoint no longer accepts handles as browseId
@@ -57,7 +59,7 @@ async def _resolve_browse_id(channel_id: str) -> str:
 
     data = await innertube_post(
         "navigation/resolve_url",
-        {"url": f"https://www.youtube.com/{channel_id}"},
+        await _language_body({"url": f"https://www.youtube.com/{channel_id}"}, language),
     )
     browse_id = data.get("endpoint", {}).get("browseEndpoint", {}).get("browseId", "")
     if not browse_id.startswith("UC"):
@@ -68,16 +70,14 @@ async def _resolve_browse_id(channel_id: str) -> str:
     return browse_id
 
 
-def _extract_items_from_tab(data: Dict[str, Any]) -> tuple[List[Dict], Optional[str]]:
+def _extract_items_from_tab(data: Dict[str, Any], *, localized: bool = False) -> tuple[List[Dict], Optional[str]]:
     """Extract video/playlist items and continuation from a browse response tab."""
     items = []
     continuation = None
 
     # Navigate the response structure
     # Path: contents -> twoColumnBrowseResultsRenderer -> tabs[] -> tabRenderer -> content
-    tabs = (
-        data.get("contents", {}).get("twoColumnBrowseResultsRenderer", {}).get("tabs", [])
-    )
+    tabs = data.get("contents", {}).get("twoColumnBrowseResultsRenderer", {}).get("tabs", [])
 
     for tab in tabs:
         tab_renderer = tab.get("tabRenderer", {})
@@ -90,7 +90,7 @@ def _extract_items_from_tab(data: Dict[str, Any]) -> tuple[List[Dict], Optional[
                 if "richItemRenderer" in item:
                     converted = rich_item_to_invidious(item["richItemRenderer"])
                     if converted:
-                        items.append(converted)
+                        items.append(_localize_list_video(item, converted, localized=localized))
                 elif "continuationItemRenderer" in item:
                     token = (
                         item["continuationItemRenderer"]
@@ -114,13 +114,37 @@ def _extract_items_from_tab(data: Dict[str, Any]) -> tuple[List[Dict], Optional[
                             shelf_items = shelf_content.get("gridRenderer", {}).get("items", [])
                         for shelf_item in shelf_items:
                             if "videoRenderer" in shelf_item:
-                                items.append(video_renderer_to_invidious(shelf_item["videoRenderer"]))
+                                items.append(
+                                    _localize_list_video(
+                                        shelf_item,
+                                        video_renderer_to_invidious(shelf_item["videoRenderer"]),
+                                        localized=localized,
+                                    )
+                                )
                             elif "gridVideoRenderer" in shelf_item:
-                                items.append(grid_video_to_invidious(shelf_item["gridVideoRenderer"]))
+                                items.append(
+                                    _localize_list_video(
+                                        shelf_item,
+                                        grid_video_to_invidious(shelf_item["gridVideoRenderer"]),
+                                        localized=localized,
+                                    )
+                                )
                     elif "videoRenderer" in content:
-                        items.append(video_renderer_to_invidious(content["videoRenderer"]))
+                        items.append(
+                            _localize_list_video(
+                                content,
+                                video_renderer_to_invidious(content["videoRenderer"]),
+                                localized=localized,
+                            )
+                        )
                     elif "gridVideoRenderer" in content:
-                        items.append(grid_video_to_invidious(content["gridVideoRenderer"]))
+                        items.append(
+                            _localize_list_video(
+                                content,
+                                grid_video_to_invidious(content["gridVideoRenderer"]),
+                                localized=localized,
+                            )
+                        )
                     elif "gridPlaylistRenderer" in content:
                         items.append(grid_playlist_to_invidious(content["gridPlaylistRenderer"]))
 
@@ -138,7 +162,9 @@ def _extract_items_from_tab(data: Dict[str, Any]) -> tuple[List[Dict], Optional[
     return items, continuation
 
 
-def _extract_items_from_continuation(data: Dict[str, Any]) -> tuple[List[Dict], Optional[str]]:
+def _extract_items_from_continuation(
+    data: Dict[str, Any], *, localized: bool = False
+) -> tuple[List[Dict], Optional[str]]:
     """Extract items from a continuation response."""
     items = []
     continuation = None
@@ -149,13 +175,25 @@ def _extract_items_from_continuation(data: Dict[str, Any]) -> tuple[List[Dict], 
             if "richItemRenderer" in item:
                 converted = rich_item_to_invidious(item["richItemRenderer"])
                 if converted:
-                    items.append(converted)
+                    items.append(_localize_list_video(item, converted, localized=localized))
             elif "gridVideoRenderer" in item:
-                items.append(grid_video_to_invidious(item["gridVideoRenderer"]))
+                items.append(
+                    _localize_list_video(
+                        item,
+                        grid_video_to_invidious(item["gridVideoRenderer"]),
+                        localized=localized,
+                    )
+                )
             elif "gridPlaylistRenderer" in item:
                 items.append(grid_playlist_to_invidious(item["gridPlaylistRenderer"]))
             elif "videoRenderer" in item:
-                items.append(video_renderer_to_invidious(item["videoRenderer"]))
+                items.append(
+                    _localize_list_video(
+                        item,
+                        video_renderer_to_invidious(item["videoRenderer"]),
+                        localized=localized,
+                    )
+                )
             elif "continuationItemRenderer" in item:
                 token = (
                     item["continuationItemRenderer"]
@@ -204,7 +242,7 @@ async def get_popular() -> List[Dict[str, Any]]:
 
 
 async def get_channel_videos(
-    channel_id: str, continuation: Optional[str] = None
+    channel_id: str, continuation: Optional[str] = None, *, language: Optional[str] = None
 ) -> Dict[str, Any]:
     """Get channel videos tab.
 
@@ -217,35 +255,35 @@ async def get_channel_videos(
     """
     if continuation:
         body = {"continuation": continuation}
-        data = await innertube_post("browse", body)
-        items, next_cont = _extract_items_from_continuation(data)
+        data = await innertube_post("browse", await _language_body(body, language))
+        items, next_cont = _extract_items_from_continuation(data, localized=language is not None)
     else:
         body = {
-            "browseId": await _resolve_browse_id(channel_id),
+            "browseId": await _resolve_browse_id(channel_id, **({"language": language} if language else {})),
             "params": CHANNEL_TAB_PARAMS["videos"],
         }
-        data = await innertube_post("browse", body)
-        items, next_cont = _extract_items_from_tab(data)
+        data = await innertube_post("browse", await _language_body(body, language))
+        items, next_cont = _extract_items_from_tab(data, localized=language is not None)
 
     logger.info(f"[InnerTube] Channel videos {channel_id}: got {len(items)} videos")
     return {"videos": items, "continuation": next_cont}
 
 
 async def get_channel_shorts(
-    channel_id: str, continuation: Optional[str] = None
+    channel_id: str, continuation: Optional[str] = None, *, language: Optional[str] = None
 ) -> Dict[str, Any]:
     """Get channel shorts tab."""
     if continuation:
         body = {"continuation": continuation}
-        data = await innertube_post("browse", body)
-        items, next_cont = _extract_items_from_continuation(data)
+        data = await innertube_post("browse", await _language_body(body, language))
+        items, next_cont = _extract_items_from_continuation(data, localized=language is not None)
     else:
         body = {
-            "browseId": await _resolve_browse_id(channel_id),
+            "browseId": await _resolve_browse_id(channel_id, **({"language": language} if language else {})),
             "params": CHANNEL_TAB_PARAMS["shorts"],
         }
-        data = await innertube_post("browse", body)
-        items, next_cont = _extract_items_from_tab(data)
+        data = await innertube_post("browse", await _language_body(body, language))
+        items, next_cont = _extract_items_from_tab(data, localized=language is not None)
 
     return {"videos": items, "continuation": next_cont}
 
