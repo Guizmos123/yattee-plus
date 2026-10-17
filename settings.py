@@ -103,6 +103,7 @@ class Settings(BaseModel):
     feed_channel_delay: int = Field(default=2, ge=1, le=30)
     feed_max_videos: int = Field(default=30, ge=10, le=100)
     feed_video_max_age: int = Field(default=30, ge=1, le=365)
+    feed_channel_retention_days: int = Field(default=14, ge=1, le=30, strict=True)
     feed_ytdlp_use_flat_playlist: bool = Field(
         default=True,
         description=(

@@ -2,7 +2,8 @@
 
 import asyncio
 import logging
-from typing import Optional
+from html import escape
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
@@ -18,6 +19,7 @@ from converters import (
     ytdlp_to_video_response,
 )
 from innertube import InnerTubeError
+from innertube._video import get_video_localized_metadata, get_video_original_metadata
 from models import ChannelExtractResponse, Thumbnail, VideoResponse
 from settings import get_settings
 from utils import get_base_url
@@ -79,6 +81,15 @@ async def get_video(
             "Force a specific extraction path. Unset (default): try Invidious first when enabled, "
             "fall back to InnerTube/yt-dlp. true: Invidious only (fails if disabled/unavailable). "
             "false: InnerTube/yt-dlp only (no Invidious fallback)."
+        ),
+    ),
+    lang: Optional[Literal["original", "fr", "en"]] = Query(
+        None,
+        description=(
+            "Video title/description preference. Omitted: preserve historical metadata. "
+            "original: prefer identifiable /player videoDetails text; fr/en: request localized /next text. "
+            "Unavailable fields keep historical values, whose language may be unknown. "
+            "Ignored with invidious=true, which never calls InnerTube."
         ),
     ),
 ):
@@ -170,7 +181,7 @@ async def get_video(
         channel_id = data.get("authorId")
         if channel_id:
             avatar_cache.get_cache().schedule_background_fetch(channel_id)
-        return response
+        return await _select_video_metadata(response, video_id, lang, invidious_only=invidious is True)
 
     async def _via_hybrid() -> VideoResponse:
         response = await _get_video_hybrid(
@@ -179,7 +190,7 @@ async def get_video(
         )
         if response is None:
             raise HTTPException(status_code=404, detail="Video not found")
-        return response
+        return await _select_video_metadata(response, video_id, lang, invidious_only=invidious is True)
 
     # invidious=true: force Invidious, no fallback
     if invidious is True:
@@ -221,6 +232,43 @@ async def get_video(
     except (KeyError, TypeError) as e:
         logger.error(f"[Videos] Unexpected error for {video_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _select_video_metadata(
+    response: VideoResponse,
+    video_id: str,
+    lang: Optional[Literal["original", "fr", "en"]],
+    *,
+    invidious_only: bool = False,
+) -> VideoResponse:
+    """Apply explicitly requested text to a copy after provider extraction.
+
+    Omitted lang and forced Invidious preserve the complete historical response.
+    Unavailable fields retain historical text without claiming it is original.
+    Playback, authors and recommendations are never changed here.
+    """
+    if lang is None or invidious_only or not innertube.is_enabled():
+        return response
+
+    try:
+        if lang == "original":
+            metadata = await get_video_original_metadata(video_id)
+        else:
+            metadata = await get_video_localized_metadata(video_id, lang)
+    except (InnerTubeError, AttributeError, TypeError, ValueError) as error:
+        logger.warning("[Videos] Metadata preference unavailable for %s (%s): %s", video_id, lang, error)
+        return response
+
+    if not isinstance(metadata, dict):
+        return response
+    updates = {}
+    if isinstance(metadata.get("title"), str):
+        updates["title"] = metadata["title"]
+    if isinstance(metadata.get("description"), str):
+        description = metadata["description"]
+        updates["description"] = description
+        updates["descriptionHtml"] = escape(description).replace("\n", "<br>")
+    return response.model_copy(update=updates) if updates else response
 
 
 async def _get_video_hybrid(

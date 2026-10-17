@@ -785,8 +785,8 @@ async def feed_fetch_loop():
             s = get_settings()
             database.cleanup_old_cached_videos(days=s.feed_video_max_age)
 
-            # Cleanup stale watched channels (not requested in 14 days)
-            database.cleanup_stale_watched_channels(days=14)
+            # Cleanup channels no longer requested, using the current retention.
+            database.cleanup_stale_watched_channels(days=s.feed_channel_retention_days)
 
             # Cleanup orphaned cached videos (channels no longer watched or subscribed)
             database.cleanup_orphaned_cached_videos()

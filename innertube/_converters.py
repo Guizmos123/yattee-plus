@@ -885,6 +885,67 @@ def _author_thumbnails_from_next(nxt: Dict[str, Any]) -> List[Dict[str, Any]]:
     return []
 
 
+def _metadata_from_next(nxt: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    """Extract the current video's title and description from a /next response.
+
+    Prefer WEB primary/secondary info, then structured description panels,
+    independently for each field. None means missing or malformed; an explicit
+    empty string is preserved and prevents fallback. Only known metadata paths
+    are visited, never sidebar recommendations. The input is not modified.
+    """
+
+    def at_path(value: Any, *keys: str) -> Any:
+        for key in keys:
+            if not isinstance(value, dict):
+                return None
+            value = value.get(key)
+        return value
+
+    def text(value: Any) -> Optional[str]:
+        if not isinstance(value, dict):
+            return None
+        simple = value.get("simpleText")
+        if isinstance(simple, str):
+            return simple
+        runs = value.get("runs")
+        if not isinstance(runs, list):
+            return None
+        if not all(isinstance(run, dict) and isinstance(run.get("text"), str) for run in runs):
+            return None
+        return "".join(run["text"] for run in runs)
+
+    def attributed_text(value: Any) -> Optional[str]:
+        content = at_path(value, "content")
+        return content if isinstance(content, str) else None
+
+    metadata: Dict[str, Optional[str]] = {"title": None, "description": None}
+    contents = at_path(nxt, "contents", "twoColumnWatchNextResults", "results", "results", "contents")
+    for item in contents if isinstance(contents, list) else []:
+        if metadata["title"] is None:
+            metadata["title"] = text(at_path(item, "videoPrimaryInfoRenderer", "title"))
+        if metadata["description"] is None:
+            secondary = at_path(item, "videoSecondaryInfoRenderer")
+            description = attributed_text(at_path(secondary, "attributedDescription"))
+            if description is None:
+                description = text(at_path(secondary, "description"))
+            metadata["description"] = description
+
+    panels = at_path(nxt, "engagementPanels")
+    for panel in panels if isinstance(panels, list) else []:
+        items = at_path(
+            panel, "engagementPanelSectionListRenderer", "content", "structuredDescriptionContentRenderer", "items"
+        )
+        for item in items if isinstance(items, list) else []:
+            if metadata["title"] is None:
+                metadata["title"] = text(at_path(item, "videoDescriptionHeaderRenderer", "title"))
+            if metadata["description"] is None:
+                metadata["description"] = attributed_text(
+                    at_path(item, "expandableVideoDescriptionBodyRenderer", "attributedDescriptionBodyText")
+                )
+
+    return metadata
+
+
 def _full_description_from_next(nxt: Dict[str, Any]) -> str:
     """Extract full description text from /next videoSecondaryInfoRenderer."""
     contents = (

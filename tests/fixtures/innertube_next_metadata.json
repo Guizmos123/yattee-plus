@@ -1,0 +1,123 @@
+{
+  "web_classic": {
+    "contents": {
+      "twoColumnWatchNextResults": {
+        "results": {
+          "results": {
+            "contents": [
+              {
+                "videoPrimaryInfoRenderer": {
+                  "title": {"simpleText": "I tried it — here's what happened! 🎬"}
+                }
+              },
+              {
+                "videoSecondaryInfoRenderer": {
+                  "attributedDescription": {"content": "First line.\nSecond line: café, déjà vu!\n"},
+                  "description": {"simpleText": "Legacy description"},
+                  "owner": {
+                    "videoOwnerRenderer": {"title": {"simpleText": "Channel name, not the video title"}}
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "web_runs": {
+    "contents": {
+      "twoColumnWatchNextResults": {
+        "results": {
+          "results": {
+            "contents": [
+              {
+                "videoPrimaryInfoRenderer": {
+                  "title": {
+                    "runs": [
+                      {"text": "J’ai essayé "},
+                      {"text": "« ça » — "},
+                      {"text": "résultat ! 🎬"}
+                    ]
+                  }
+                }
+              },
+              {
+                "videoSecondaryInfoRenderer": {
+                  "description": {
+                    "runs": [
+                      {"text": "Été à Paris.\n"},
+                      {"text": "Merci !", "navigationEndpoint": {"urlEndpoint": {"url": "https://example.invalid/"}}},
+                      {"text": "\n"}
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "engagement_panel": {
+    "engagementPanels": [
+      {
+        "engagementPanelSectionListRenderer": {
+          "content": {
+            "structuredDescriptionContentRenderer": {
+              "items": [
+                {"videoDescriptionHeaderRenderer": {"title": {"simpleText": "Un titre français — déjà !"}}},
+                {
+                  "expandableVideoDescriptionBodyRenderer": {
+                    "attributedDescriptionBodyText": {"content": "Description complète.\nLiens : été, cœur et vidéo 🎥.\n"}
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    ]
+  },
+  "recommendations_only": {
+    "contents": {
+      "twoColumnWatchNextResults": {
+        "results": {"results": {"contents": [
+          {"compactVideoRenderer": {"title": {"simpleText": "Unrelated compact title"}}},
+          {"itemSectionRenderer": {"contents": [
+            {"videoPrimaryInfoRenderer": {"title": {"simpleText": "Nested unrelated title"}}}
+          ]}}
+        ]}},
+        "secondaryResults": {
+          "secondaryResults": {
+            "results": [
+              {"compactVideoRenderer": {"title": {"simpleText": "Recommended video"}}},
+              {"videoPrimaryInfoRenderer": {"title": {"simpleText": "Wrong result branch"}}},
+              {"lockupViewModel": {"metadata": {"lockupMetadataViewModel": {"title": {"content": "Another recommendation"}}}}}
+            ]
+          }
+        }
+      }
+    }
+  },
+  "unexpected": [
+    null,
+    false,
+    42,
+    "not a response",
+    [],
+    {"contents": null},
+    {"contents": []},
+    {"contents": {"twoColumnWatchNextResults": null}},
+    {"contents": {"twoColumnWatchNextResults": {"results": []}}},
+    {"contents": {"twoColumnWatchNextResults": {"results": {"results": null}}}},
+    {"contents": {"twoColumnWatchNextResults": {"results": {"results": {"contents": {}}}}}},
+    {"contents": {"twoColumnWatchNextResults": {"results": {"results": {"contents": [null, 7, [], "bad", {"videoPrimaryInfoRenderer": []}, {"videoSecondaryInfoRenderer": null}]}}}}},
+    {"engagementPanels": null},
+    {"engagementPanels": {}},
+    {"engagementPanels": [null, 42, [], "bad", {"engagementPanelSectionListRenderer": null}]},
+    {"engagementPanels": [{"engagementPanelSectionListRenderer": {"content": []}}]},
+    {"engagementPanels": [{"engagementPanelSectionListRenderer": {"content": {"structuredDescriptionContentRenderer": {"items": {}}}}}]},
+    {"engagementPanels": [{"engagementPanelSectionListRenderer": {"content": {"structuredDescriptionContentRenderer": {"items": [null, 5, [], {"videoDescriptionHeaderRenderer": []}, {"expandableVideoDescriptionBodyRenderer": false}]}}}}]}
+  ]
+}

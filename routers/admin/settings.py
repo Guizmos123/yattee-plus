@@ -3,7 +3,7 @@
 from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import avatar_cache
 import database
@@ -67,6 +67,7 @@ class SettingsResponse(BaseModel):
     feed_channel_delay: int
     feed_max_videos: int
     feed_video_max_age: int
+    feed_channel_retention_days: int
     feed_ytdlp_use_flat_playlist: bool
     feed_fallback_ytdlp_on_414: bool
     feed_fallback_ytdlp_on_error: bool
@@ -112,6 +113,7 @@ class SettingsUpdate(BaseModel):
     feed_channel_delay: Optional[int] = None
     feed_max_videos: Optional[int] = None
     feed_video_max_age: Optional[int] = None
+    feed_channel_retention_days: Optional[int] = Field(default=None, ge=1, le=30, strict=True)
     feed_ytdlp_use_flat_playlist: Optional[bool] = None
     feed_fallback_ytdlp_on_414: Optional[bool] = None
     feed_fallback_ytdlp_on_error: Optional[bool] = None

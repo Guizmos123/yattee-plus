@@ -587,6 +587,11 @@
                             <input type="number" id="feed-video-max-age" min="1" max="365" class="input-base" x-model.number="feed_video_max_age">
                             <small class="block mt-1 text-muted text-sm">Days before cleanup</small>
                         </div>
+                        <div>
+                            <label for="feed-channel-retention-days" class="block mb-2 font-medium">Deleted Channel Retention (days)</label>
+                            <input type="number" id="feed-channel-retention-days" min="1" max="30" step="1" class="input-base" x-model.number="feed_channel_retention_days">
+                            <small class="block mt-1 text-muted text-sm">Number of days to retain deleted channels before permanent cleanup (1–30 days).</small>
+                        </div>
                     </div>
                     <div class="mt-4">
                         <div class="flex items-center gap-3">

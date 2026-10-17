@@ -38,6 +38,7 @@ document.addEventListener('alpine:init', () => {
         feed_channel_delay: 2,
         feed_max_videos: 30,
         feed_video_max_age: 30,
+        feed_channel_retention_days: 14,
         feed_ytdlp_use_flat_playlist: false,
         feed_fallback_ytdlp_on_414: false,
         feed_fallback_ytdlp_on_error: true,
@@ -97,6 +98,7 @@ document.addEventListener('alpine:init', () => {
                 this.feed_channel_delay = settings.feed_channel_delay || 2;
                 this.feed_max_videos = settings.feed_max_videos || 30;
                 this.feed_video_max_age = settings.feed_video_max_age || 30;
+                this.feed_channel_retention_days = settings.feed_channel_retention_days ?? 14;
                 this.feed_ytdlp_use_flat_playlist = settings.feed_ytdlp_use_flat_playlist || false;
                 this.feed_fallback_ytdlp_on_414 = settings.feed_fallback_ytdlp_on_414 || false;
                 this.feed_fallback_ytdlp_on_error = settings.feed_fallback_ytdlp_on_error !== false;
@@ -151,6 +153,7 @@ document.addEventListener('alpine:init', () => {
                     feed_channel_delay: parseInt(this.feed_channel_delay) || 2,
                     feed_max_videos: parseInt(this.feed_max_videos) || 30,
                     feed_video_max_age: parseInt(this.feed_video_max_age) || 30,
+                    feed_channel_retention_days: this.feed_channel_retention_days,
                     feed_ytdlp_use_flat_playlist: this.feed_ytdlp_use_flat_playlist,
                     feed_fallback_ytdlp_on_414: this.feed_fallback_ytdlp_on_414,
                     feed_fallback_ytdlp_on_error: this.feed_fallback_ytdlp_on_error,

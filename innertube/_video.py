@@ -13,12 +13,13 @@ from typing import Any, Dict, List, Optional, Tuple
 from cachetools import TTLCache
 
 from converters._helpers import _xtags_from_url
-from innertube._client import InnerTubeError, innertube_post
-from innertube._converters import _parse_storyboard_spec, innertube_player_to_invidious_video
+from innertube._client import InnerTubeError, _build_context, _get_client_version, innertube_post
+from innertube._converters import _metadata_from_next, _parse_storyboard_spec, innertube_player_to_invidious_video
 
 logger = logging.getLogger("innertube")
 
 _video_cache: Optional[TTLCache] = None
+_localized_metadata_cache: Optional[TTLCache] = None
 
 
 def _get_cache() -> TTLCache:
@@ -33,6 +34,93 @@ def _get_cache() -> TTLCache:
 def reset_cache() -> None:
     global _video_cache
     _video_cache = None
+
+
+def _get_localized_metadata_cache() -> TTLCache:
+    global _localized_metadata_cache
+    if _localized_metadata_cache is None:
+        from settings import get_settings
+
+        _localized_metadata_cache = TTLCache(maxsize=200, ttl=get_settings().cache_video_ttl)
+    return _localized_metadata_cache
+
+
+def reset_localized_metadata_cache() -> None:
+    """Reset localized text entries independently of the player/next cache."""
+    global _localized_metadata_cache
+    _localized_metadata_cache = None
+
+
+async def get_video_localized_metadata(video_id: str, language: str) -> Dict[str, Optional[str]]:
+    """Request /next text in French or English without touching playback data.
+
+    YouTube can return original text when no localization is available; hl is
+    a preference, not proof of the returned language. Missing/malformed data or
+    InnerTube failures return None fields without caching the failed lookup.
+    Explicit empty strings are preserved and cached. Every return is a fresh
+    dict so callers cannot modify a cached entry.
+    """
+    if language not in ("fr", "en"):
+        raise ValueError("Localized metadata language must be 'fr' or 'en'")
+
+    from settings import get_settings
+
+    missing: Dict[str, Optional[str]] = {"title": None, "description": None}
+    if not get_settings().innertube_enabled:
+        return missing
+
+    cache = _get_localized_metadata_cache()
+    cache_key = (video_id, language)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached.copy()
+
+    try:
+        version = await _get_client_version()
+        body = {
+            "videoId": video_id,
+            "context": _build_context(language=language, client_version=version),
+        }
+        data = await innertube_post("next", body)
+        metadata = _metadata_from_next(data)
+    except (InnerTubeError, AttributeError, TypeError, ValueError) as error:
+        logger.warning("[InnerTube] Localized metadata failed for %s (%s): %s", video_id, language, error)
+        return missing
+
+    if any(value is not None for value in metadata.values()):
+        cache[cache_key] = metadata.copy()
+    return metadata
+
+
+async def get_video_original_metadata(video_id: str) -> Dict[str, Optional[str]]:
+    """Read identifiable original text from /player videoDetails only.
+
+    This separate metadata lookup is used only for an explicit original-text
+    request. It never reuses the merged player/next description as an original
+    and does not alter either metadata cache or playback extraction.
+    """
+    from settings import get_settings
+
+    missing: Dict[str, Optional[str]] = {"title": None, "description": None}
+    if not get_settings().innertube_enabled:
+        return missing
+
+    try:
+        data = await innertube_post("player", {"videoId": video_id})
+        details = data.get("videoDetails") if isinstance(data, dict) else None
+        if not isinstance(details, dict):
+            return missing
+        if details.get("videoId") not in (None, video_id):
+            return missing
+        title = details.get("title")
+        description = details.get("shortDescription")
+        return {
+            "title": title if isinstance(title, str) else None,
+            "description": description if isinstance(description, str) else None,
+        }
+    except (InnerTubeError, AttributeError, TypeError, ValueError) as error:
+        logger.warning("[InnerTube] Original metadata failed for %s: %s", video_id, error)
+        return missing
 
 
 async def get_video_player_next(video_id: str, use_cache: bool = True) -> Dict[str, Any]:
