@@ -3,6 +3,7 @@
 import asyncio
 import copy
 import sqlite3
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -156,13 +157,14 @@ def store(language="fr", **fields):
         language,
         title=fields.get("title"),
         description=fields.get("description"),
-        source="innertube:next",
+        source=fields.get("source", "innertube:player" if language == "original" else "innertube:next"),
+        checked_at=fields.get("checked_at"),
     )
 
 
-@pytest.mark.parametrize("language", [None, "original"])
+@pytest.mark.parametrize("language", [None])
 @pytest.mark.parametrize("path,method", ROUTES)
-def test_historical_and_original_keep_exact_response_and_calls(api, monkeypatch, path, method, language):
+def test_historical_keeps_exact_response_and_calls(api, monkeypatch, path, method, language):
     items = [video_item()]
     mock = AsyncMock(return_value=items if method == "search" else {"videos": items, "continuation": "token"})
     monkeypatch.setattr(innertube, method, mock)
@@ -174,9 +176,52 @@ def test_historical_and_original_keep_exact_response_and_calls(api, monkeypatch,
     assert "language" not in mock.await_args.kwargs
 
 
+@pytest.mark.parametrize("path,method", ROUTES)
+def test_original_uses_local_candidate_without_additional_acquisition(api, monkeypatch, path, method):
+    items = [video_item(), video_item("unknown")]
+    provider = AsyncMock(return_value=items if method == "search" else {"videos": items, "continuation": "token"})
+    monkeypatch.setattr(innertube, method, provider)
+    store("original", title="Candidate original", description="Description candidate")
+    baseline = api.get(path, params=params()).json()
+    provider.reset_mock()
+    response = api.get(path, params=params("original"))
+    expected = copy.deepcopy(baseline)
+    rows = expected if method == "search" else expected["videos"]
+    rows[0].update(title="Candidate original", description="Description candidate")
+    assert response.json() == expected
+    assert provider.await_count == 1
+    assert "language" not in provider.await_args.kwargs
+
+
 @pytest.mark.parametrize("language", ["fr", "en"])
 @pytest.mark.parametrize("path,method", ROUTES)
-def test_stored_texts_are_batched_without_changing_order_or_other_fields(api, monkeypatch, path, method, language):
+def test_old_storage_does_not_override_localized_provider(api, monkeypatch, path, method, language):
+    store(
+        language,
+        title="Old stored title",
+        description="Old stored description",
+        checked_at=datetime.now(UTC) - timedelta(days=2),
+    )
+    items = [video_item()]
+    monkeypatch.setattr(innertube, method, AsyncMock(return_value=items if method == "search" else {"videos": items}))
+    row = response_items(api.get(path, params=params(language)), method)[0]
+    assert row["title"] == "YouTube title" and row["description"] == "YouTube snippet"
+
+
+@pytest.mark.parametrize("path,method", ROUTES)
+def test_missing_title_uses_local_candidate_independently_of_current_description(api, monkeypatch, path, method):
+    store(title="Stored FR", description="Old description")
+    items = [video_item(title=None, description="Current description")]
+    monkeypatch.setattr(innertube, method, AsyncMock(return_value=items if method == "search" else {"videos": items}))
+    row = response_items(api.get(path, params=params("fr")), method)[0]
+    assert row["title"] == "Stored FR" and row["description"] == "Current description"
+
+
+@pytest.mark.parametrize("language", ["fr", "en"])
+@pytest.mark.parametrize("path,method", ROUTES)
+def test_localized_provider_precedes_storage_without_changing_order_or_other_fields(
+    api, monkeypatch, path, method, language
+):
     items = [video_item(), video_item("unknown"), video_item("third", description=None)]
     before = copy.deepcopy(items)
     store(language, title="", description="court")
@@ -189,10 +234,8 @@ def test_stored_texts_are_batched_without_changing_order_or_other_fields(api, mo
     assert response.status_code == 200
     mocked.assert_awaited()
     assert mocked.await_args.kwargs["language"] == language
-    read.assert_called_once_with(["known", "unknown", "third"], languages=[language])
+    read.assert_called_once_with(["known", "unknown", "third"], languages=[language, "original"])
     expected = copy.deepcopy(baseline)
-    videos = expected if method == "search" else expected["videos"]
-    videos[0].update(title="", description="court")
     assert response.json() == expected
     assert items == before
     assert database.get_feed_video_metadata(["known", "unknown", "third"]) == metadata_before
@@ -202,7 +245,7 @@ def test_stored_texts_are_batched_without_changing_order_or_other_fields(api, mo
 def test_sqlite_null_preserves_innertube_text_and_other_language_is_not_used(api, monkeypatch, path, method):
     store("fr", title=None, description=None)
     store("en", title="English must not replace FR", description="English")
-    store("original", title="Original must not replace FR", description="Original")
+    store("original", title="Original must not replace current FR", description="Original")
     items = [video_item(description="")]
     monkeypatch.setattr(
         innertube,
@@ -231,9 +274,10 @@ def test_sqlite_failure_retains_available_text(api, monkeypatch, path, method):
     assert response_items(result, method)[0]["title"] == "YouTube title"
 
 
+@pytest.mark.parametrize("language", ["original", "fr", "en"])
 @pytest.mark.parametrize("provider", ["invidious", "ytdlp"])
 @pytest.mark.parametrize("path,method", ROUTES)
-def test_fallback_provider_behavior_is_unchanged(api, monkeypatch, path, method, provider):
+def test_fallback_provider_uses_local_variants(api, monkeypatch, path, method, provider, language):
     monkeypatch.setattr(innertube, method, AsyncMock(side_effect=innertube.InnerTubeError("unavailable")))
     monkeypatch.setattr(channels.invidious_proxy, "is_enabled", lambda: provider == "invidious")
     if provider == "invidious":
@@ -243,7 +287,8 @@ def test_fallback_provider_behavior_is_unchanged(api, monkeypatch, path, method,
             "get_channel_shorts": "get_channel_shorts",
             "search_channel": "search_channel",
         }[method]
-        output = [video_item()] if method == "search" else {"videos": [video_item()], "continuation": "token"}
+        items = [video_item("before"), video_item(), video_item("after")]
+        output = items if method == "search" else {"videos": items, "continuation": "token"}
         mock = AsyncMock(return_value=output)
         monkeypatch.setattr(channels.invidious_proxy, inv_method, mock)
     else:
@@ -254,15 +299,24 @@ def test_fallback_provider_behavior_is_unchanged(api, monkeypatch, path, method,
             "get_channel_shorts": "get_channel_tab",
             "search_channel": "ytdlp_search_channel",
         }[method]
-        mock = AsyncMock(return_value=[{"id": "fallback", "title": "Fallback", "duration": 61}])
+        mock = AsyncMock(
+            return_value=[
+                {"id": video_id, "title": "Fallback", "duration": 61} for video_id in ("before", "known", "after")
+            ]
+        )
         monkeypatch.setattr(route_module, yt_method, mock)
-    with patch.object(database, "get_feed_video_metadata", side_effect=AssertionError("Fallback SQLite lookup")):
-        baseline = api.get(path, params=params())
-        mock.reset_mock()
-        localized = api.get(path, params=params("fr"))
+    baseline = api.get(path, params=params())
+    store(language, title="Local title", description="Local description")
+    mock.reset_mock()
+    localized = api.get(path, params=params(language))
     assert localized.status_code == baseline.status_code == 200
-    assert localized.json() == baseline.json()
+    expected = baseline.json()
+    rows = expected if method == "search" else expected["videos"]
+    rows[1].update(title="Local title", description="Local description")
+    assert localized.json() == expected
     assert "language" not in mock.await_args.kwargs
+    with patch.object(database, "get_feed_video_metadata", return_value=[]):
+        assert api.get(path, params=params(language)).json() == baseline.json()
 
 
 def test_mixed_search_only_overlays_videos(api, monkeypatch):
@@ -281,7 +335,7 @@ def test_mixed_search_only_overlays_videos(api, monkeypatch):
     store(title="FR video", description="FR description")
     baseline = api.get("/api/v1/search", params=params(type="all")).json()
     localized = api.get("/api/v1/search", params=params("fr", type="all")).json()
-    assert localized[0]["title"] == "FR video"
+    assert localized[0]["title"] == "YouTube title"
     assert localized[1:] == baseline[1:]
 
 
@@ -306,7 +360,7 @@ def test_route_to_context_converter_and_sqlite_integration(api, monkeypatch, pat
     assert result.status_code == 200
     rows = response_items(result, method)
     assert [row["videoId"] for row in rows] == ["known", "unknown"]
-    assert rows[0]["title"] == "Titre SQLite"
+    assert rows[0]["title"] == "Titre — été 🎬"
     assert rows[1]["title"] == "Titre — été 🎬"
     for row in rows:
         assert row["description"] == "Extrait français\n& <texte>"

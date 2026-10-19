@@ -110,7 +110,10 @@ async def get_video_localized_metadata(
 
 
 async def get_video_original_metadata(video_id: str) -> Dict[str, Optional[str]]:
-    """Read identifiable original text from /player videoDetails only.
+    """Read original candidates from /player videoDetails only.
+
+    The client context and YouTube may influence this text. Its endpoint/source
+    is not proof of original language or uploader-authored primary metadata.
 
     This separate metadata lookup is used only for an explicit original-text
     request. It never reuses the merged player/next description as an original

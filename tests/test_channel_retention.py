@@ -123,7 +123,13 @@ def test_existing_installation_migration_preserves_data_and_sets_default(test_db
     command.upgrade(alembic_config, "head")
     migrated = database.get_settings_row()
     assert migrated[RETENTION] == 14
-    assert {key: value for key, value in migrated.items() if key != RETENTION} == old_settings
+    assert {key: migrated[key] for key in old_settings} == old_settings
+    assert set(migrated) - set(old_settings) == {
+        RETENTION,
+        "metadata_sync_enabled",
+        "metadata_sync_interval_hours",
+        "metadata_sync_max_http_per_hour",
+    }
     assert database.get_all_watched_channels() == old_channels
     with database.get_connection() as connection:
         assert connection.execute("SELECT COUNT(*) FROM cached_videos").fetchone()[0] == 1

@@ -22,6 +22,7 @@ import database
 import env_provisioning
 import feed_fetcher
 import invidious_proxy
+import metadata_sync
 import pot_provider
 from basic_auth import BasicAuthMiddleware
 from database.repositories.sites import get_enabled_sites
@@ -45,16 +46,20 @@ async def lifespan(app: FastAPI):
     proxy.start_cleanup_task()
     # Startup: Start feed fetcher for subscriptions
     feed_fetcher.start_feed_fetcher()
-    # Startup: Start avatar cache cleanup task
-    avatar_cache.start_avatar_cleanup_task()
-    yield
-    # Shutdown: Stop the POT provider process
-    cookie_health.stop_task()
-    await pot_provider.manager.stop()
-    # Shutdown: Stop avatar cache cleanup task
-    avatar_cache.stop_avatar_cleanup_task()
-    # Shutdown: Stop feed fetcher
-    feed_fetcher.stop_feed_fetcher()
+    metadata_sync.start_metadata_sync()
+    try:
+        # Startup: Start avatar cache cleanup task
+        avatar_cache.start_avatar_cleanup_task()
+        yield
+    finally:
+        await metadata_sync.stop_metadata_sync()
+        # Shutdown: Stop the POT provider process
+        cookie_health.stop_task()
+        await pot_provider.manager.stop()
+        # Shutdown: Stop avatar cache cleanup task
+        avatar_cache.stop_avatar_cleanup_task()
+        # Shutdown: Stop feed fetcher
+        feed_fetcher.stop_feed_fetcher()
 
 
 app = FastAPI(

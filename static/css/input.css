@@ -208,6 +208,127 @@ body {
   border-color: var(--color-primary);
 }
 
+/* Settings: keep every panel mounted so navigation preserves unsaved values. */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.settings-section-nav {
+  position: sticky;
+  top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.settings-section-tab {
+  padding: 0.625rem 0.875rem;
+  border: 1px solid transparent;
+  border-inline-start: 3px solid transparent;
+  border-radius: 0.375rem;
+  background: transparent;
+  color: var(--color-muted);
+  text-align: start;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.settings-section-tab:hover {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+}
+
+.settings-section-tab[aria-selected="true"] {
+  border-color: var(--color-border);
+  border-inline-start-color: var(--color-primary);
+  background-color: var(--color-bg);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.settings-content {
+  min-width: 0;
+  min-height: 27rem;
+  padding-inline-start: 1.5rem;
+  border-inline-start: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-section-panel {
+  min-width: 0;
+}
+
+.settings-section-panel .toggle {
+  flex-shrink: 0;
+}
+
+.settings-save-footer {
+  margin-top: auto;
+}
+
+.settings-mobile-nav {
+  display: none;
+}
+
+.settings-section-tab:focus-visible,
+.settings-section-panel:focus-visible,
+.settings-mobile-nav select:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+}
+
+@media (max-width: 767px) {
+  /* Keep the shared admin header from overflowing the Settings viewport. */
+  .admin-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.5rem 1rem;
+  }
+
+  .admin-header-main {
+    display: contents;
+  }
+
+  .admin-header-nav {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    flex-wrap: wrap;
+    row-gap: 0.5rem;
+  }
+
+  .admin-header-account {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.25rem;
+  }
+
+  .settings-section-nav {
+    display: none;
+  }
+
+  .settings-mobile-nav {
+    display: block;
+  }
+
+  .settings-content {
+    min-height: 0;
+    padding-inline-start: 0;
+    border-inline-start: 0;
+  }
+
+  .settings-save-footer {
+    margin-top: 1rem;
+  }
+}
+
 /* Theme toggle button */
 .theme-toggle {
   background: none;

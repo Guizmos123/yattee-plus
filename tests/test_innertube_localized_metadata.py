@@ -65,7 +65,7 @@ class TestVideoLocalizedMetadata(unittest.IsolatedAsyncioTestCase):
             "cryptography": _module("cryptography", __path__=[]),
             "cryptography.fernet": _module("cryptography.fernet", InvalidToken=ValueError),
             "config": _module("config"),
-            "database": _module("database"),
+            "database": _module("database", get_feed_video_metadata=Mock(return_value=[])),
             "egress": _module("egress"),
             "encryption": _module("encryption"),
             "settings": _module("settings", get_settings=Mock(return_value=self.settings)),
@@ -85,6 +85,7 @@ class TestVideoLocalizedMetadata(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(network.stop)
 
         self.client = _load_module("innertube._client", "innertube/_client.py")
+        _load_module("innertube._localization", "innertube/_localization.py")
         _load_module("innertube._converters", "innertube/_converters.py")
         self.version = AsyncMock(return_value="2.synthetic.dynamic")
         self.client._get_client_version = self.version

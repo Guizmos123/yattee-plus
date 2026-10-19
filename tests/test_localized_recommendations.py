@@ -197,6 +197,8 @@ class TestRecommendationHTTP(unittest.IsolatedAsyncioTestCase):
         self.case.localized.return_value = {
             "title": None,
             "description": None,
+        }
+        self.case.recommendations.return_value = {
             "recommendedVideos": {
                 "b": {"title": None, "description": ""},
                 "foreign": {"title": "Never insert", "description": "Never insert"},
@@ -221,7 +223,7 @@ class TestRecommendationHTTP(unittest.IsolatedAsyncioTestCase):
             {k: v for k, v in self.before.items() if k != "recommendedVideos"},
         )
         self.assertEqual(self.case.base.model_dump(mode="json"), self.before)
-        self.case.localized.assert_awaited_once_with("synthetic01", "fr", include_recommendations=True)
+        self.case.recommendations.assert_awaited_once_with("synthetic01", "fr", include_recommendations=True)
         self.case.player_next.assert_not_awaited()
 
     async def test_original_and_omitted_language_preserve_recommendations(self):
@@ -242,11 +244,11 @@ class TestRecommendationHTTP(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_or_failed_localized_next_preserves_recommendations(self):
         for metadata in ({"title": None, "description": None}, {"recommendedVideos": {}}):
-            self.case.localized.return_value = metadata
+            self.case.recommendations.return_value = metadata
             result = await self.case.request(lang="fr")
             self.assertEqual(result.status_code, 200)
             self.assertEqual(result.json(), self.before)
-        self.case.localized.side_effect = self.case.route.InnerTubeError("Simulated next failure")
+        self.case.recommendations.side_effect = self.case.route.InnerTubeError("Simulated next failure")
         with self.assertLogs("routers.videos"):
             result = await self.case.request(lang="en")
         self.assertEqual(result.status_code, 200)
@@ -257,7 +259,7 @@ class TestRecommendationHTTP(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0)
             return {"recommendedVideos": {"a": {"title": f"Title {language}", "description": None}}}
 
-        self.case.localized.side_effect = localized
+        self.case.recommendations.side_effect = localized
         french, english = await asyncio.gather(self.case.request(lang="fr"), self.case.request(lang="en"))
         for language, response in (("fr", french), ("en", english)):
             self.assertEqual(response.status_code, 200)
@@ -273,7 +275,7 @@ class TestRecommendationHTTP(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(context["gl"], "US")
             return next_response([compact("a", title=f"Title {context['hl']}", descriptionSnippet="Brief.")])
 
-        self.case.localized.side_effect = _video.get_video_localized_metadata
+        self.case.recommendations.side_effect = _video.get_video_localized_metadata
         with (
             patch("settings.get_settings", return_value=SimpleNamespace(innertube_enabled=True)),
             patch.object(_video, "_get_localized_metadata_cache", return_value={}),

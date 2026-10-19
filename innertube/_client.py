@@ -36,10 +36,15 @@ _client_version_fetched: float = 0
 class InnerTubeError(Exception):
     """Error from InnerTube API."""
 
-    def __init__(self, message: str, status_code: Optional[int] = None, is_retryable: bool = False):
+    def __init__(
+        self, message: str, status_code: Optional[int] = None, is_retryable: bool = False,
+        *, error_kind: Optional[str] = None, retry_after: Optional[str] = None,
+    ):
         super().__init__(message)
         self.status_code = status_code
         self.is_retryable = is_retryable
+        self.error_kind = error_kind
+        self.retry_after = retry_after
 
 
 async def _get_client_version() -> str:
@@ -254,13 +259,18 @@ async def reset_client() -> None:
     _client = None
 
 
-async def innertube_post(endpoint: str, body: Dict[str, Any], use_cookies: bool = True) -> Any:
+async def innertube_post(
+    endpoint: str, body: Dict[str, Any], use_cookies: bool = True, *, metadata_trace: Any = None
+) -> Any:
     """Make a POST request to the InnerTube API.
 
     Args:
         endpoint: API endpoint (e.g., "next", "browse", "search")
         body: Request body (context will be added automatically)
         use_cookies: Whether to include YouTube cookies from credentials
+        metadata_trace: Opt-in per-attempt accounting for the future metadata
+            service. Legacy callers retain their existing retries and behavior.
+            Instrumented callers must supply context (no unmetered version GET).
 
     Returns:
         Parsed JSON response
@@ -271,7 +281,10 @@ async def innertube_post(endpoint: str, body: Dict[str, Any], use_cookies: bool 
     from settings import get_settings
 
     if not get_settings().innertube_enabled:
-        raise InnerTubeError("InnerTube is disabled", is_retryable=False)
+        raise InnerTubeError("InnerTube is disabled", is_retryable=False, error_kind="disabled")
+
+    if metadata_trace is not None and "context" not in body:
+        raise ValueError("Instrumented metadata requests require explicit context")
 
     client = await get_client()
     url = f"{INNERTUBE_API_URL}/{endpoint}?key={INNERTUBE_API_KEY}"
@@ -309,42 +322,76 @@ async def innertube_post(endpoint: str, body: Dict[str, Any], use_cookies: bool 
             logger.info(f"[InnerTube] Retry {attempt}/{max_retries} for {endpoint} after {delay:.1f}s")
             await asyncio.sleep(delay)
 
+        if metadata_trace is not None:
+            metadata_trace.start(endpoint)
+
+        response = None
         try:
-            response = await client.post(url, json=body, headers=headers)
+            # Do not allow automatic, uncounted redirect requests on the opt-in
+            # metadata path. The ordinary playback/client path is unchanged.
+            request_options = {"follow_redirects": False} if metadata_trace is not None else {}
+            response = await client.post(url, json=body, headers=headers, **request_options)
             response.raise_for_status()
             data = response.json()
 
             # Check for InnerTube-level errors
             if "error" in data:
                 error = data["error"]
+                if metadata_trace is not None and not isinstance(error, dict):
+                    raise ValueError("Malformed InnerTube error")
                 msg = error.get("message", str(error))
                 code = error.get("code", 0)
-                raise InnerTubeError(msg, status_code=code, is_retryable=code in retryable_codes)
+                if metadata_trace is not None and type(code) is not int:
+                    raise ValueError("Malformed InnerTube error code")
+                if metadata_trace is not None:
+                    metadata_trace.finish(
+                        status=response.status_code, provider_status=code,
+                        retry_after=response.headers.get("Retry-After"),
+                    )
+                raise InnerTubeError(
+                    msg, status_code=code, is_retryable=code in retryable_codes,
+                    retry_after=response.headers.get("Retry-After") if metadata_trace is not None else None,
+                )
 
+            if metadata_trace is not None:
+                metadata_trace.finish(status=response.status_code)
             return data
 
         except httpx.HTTPStatusError as e:
             status = e.response.status_code
+            retry_after = e.response.headers.get("Retry-After") if metadata_trace is not None else None
+            if metadata_trace is not None:
+                metadata_trace.finish(status=status, retry_after=retry_after)
             msg = f"HTTP {status}: {e.response.text[:200]}"
             logger.warning(f"[InnerTube] Error: {endpoint} - {msg}")
-            last_error = InnerTubeError(msg, status_code=status, is_retryable=status in retryable_codes)
-            if not last_error.is_retryable:
+            last_error = InnerTubeError(
+                msg, status_code=status, is_retryable=status in retryable_codes, retry_after=retry_after
+            )
+            if not last_error.is_retryable or (metadata_trace is not None and status == 429):
                 raise last_error
 
         except httpx.TimeoutException as e:
+            if metadata_trace is not None:
+                metadata_trace.finish(error="timeout")
             msg = f"Timeout: {e}"
             logger.warning(f"[InnerTube] Timeout: {endpoint}")
-            last_error = InnerTubeError(msg, is_retryable=True)
+            last_error = InnerTubeError(msg, is_retryable=True, error_kind="timeout")
 
         except httpx.RequestError as e:
+            if metadata_trace is not None:
+                metadata_trace.finish(error="network")
             msg = f"Request failed: {e}"
             logger.warning(f"[InnerTube] Request error: {endpoint} - {e}")
-            last_error = InnerTubeError(msg, is_retryable=True)
+            last_error = InnerTubeError(msg, is_retryable=True, error_kind="network")
 
         except InnerTubeError:
             raise
 
         except (ValueError, TypeError) as e:
+            if metadata_trace is not None:
+                metadata_trace.finish(
+                    status=response.status_code if response is not None else None, error="invalid_response"
+                )
             raise InnerTubeError(f"Unexpected error: {e}", is_retryable=False)
 
     logger.warning(f"[InnerTube] All {max_retries} retries exhausted for {endpoint}")

@@ -39,9 +39,7 @@ def _convert_innertube_item(
     return invidious_to_video_list_item(item)
 
 
-def _convert_invidious_item(
-    item: dict, invidious_base: str
-) -> Union[VideoListItem, ChannelListItem, PlaylistListItem]:
+def _convert_invidious_item(item: dict, invidious_base: str) -> Union[VideoListItem, ChannelListItem, PlaylistListItem]:
     """Convert an Invidious API result to a response model."""
     item_type = item.get("type", "video")
     if item_type == "channel":
@@ -75,7 +73,7 @@ async def search(
             q, search_type=search_type, page=page, sort=sort, date=date, duration=duration, **options
         )
         if results:
-            results = _apply_stored_list_metadata(results, language)
+            results = _apply_stored_list_metadata(results, lang, provider_language=language)
             return [_convert_innertube_item(item) for item in results]
     except innertube.InnerTubeError as e:
         logger.debug(f"[Search] InnerTube search error: {e}")
@@ -87,7 +85,9 @@ async def search(
             results = await invidious_proxy.search(q, type=invidious_type, page=page)
             if results:
                 invidious_base = _get_invidious_base()
-                return [_convert_invidious_item(item, invidious_base) for item in results]
+                return [
+                    _convert_invidious_item(item, invidious_base) for item in _apply_stored_list_metadata(results, lang)
+                ]
         except invidious_proxy.InvidiousProxyError as e:
             logger.debug(f"[Search] Invidious search error: {e}")
 
@@ -103,7 +103,10 @@ async def search(
             start = (page - 1) * per_page
             page_results = results[start : start + per_page]
 
-            return [ytdlp_to_video_list_item(item) for item in page_results]
+            return [
+                ytdlp_to_video_list_item(item)
+                for item in _apply_stored_list_metadata(page_results, lang, id_field="id")
+            ]
         except YtDlpError as e:
             logger.debug(f"[Search] yt-dlp search error: {e}")
         except (KeyError, TypeError, ValueError) as e:

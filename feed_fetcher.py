@@ -923,11 +923,6 @@ async def feed_fetch_loop():
             # Cleanup orphaned cached videos (channels no longer watched or subscribed)
             database.cleanup_orphaned_cached_videos()
 
-            try:
-                await enrich_feed_video_metadata()
-            except Exception:
-                logger.exception("[Feed] Metadata enrichment failed; synchronized Feed remains available")
-
         except Exception as e:
             logger.error(f"Feed fetch loop error: {e}", exc_info=True)
 

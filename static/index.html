@@ -8,13 +8,13 @@
     <script>if(localStorage.getItem('theme')==='dark')document.documentElement.setAttribute('data-theme','dark')</script>
 </head>
 <body x-data x-init="$store.app.init()">
-    <header class="bg-card px-4 py-2 border-b border-border flex justify-between items-center">
-        <div class="flex items-center gap-6">
+    <header class="admin-header bg-card px-4 py-2 border-b border-border flex justify-between items-center">
+        <div class="admin-header-main flex items-center gap-6">
             <a href="/" class="text-text flex items-center gap-2" style="text-decoration:none">
                 <img src="/static/icon.png" alt="" width="32" height="32" style="border-radius:6px">
                 <span class="text-xl font-semibold">Yattee Server</span>
             </a>
-            <nav class="flex gap-4">
+            <nav class="admin-header-nav flex gap-4">
                 <a href="/watch" class="text-muted hover:text-text transition-colors font-medium">Watch</a>
                 <template x-for="tab in $store.tabs.tabs" :key="tab.id">
                     <button class="bg-transparent border-none cursor-pointer transition-colors font-medium"
@@ -25,7 +25,7 @@
                 </template>
             </nav>
         </div>
-        <div class="flex items-center gap-3">
+        <div class="admin-header-account flex items-center gap-3">
             <span class="text-muted font-medium" x-text="$store.app.currentUser?.username"></span>
             <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
                 <svg class="theme-icon-sun w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
@@ -417,368 +417,445 @@
                     <button class="btn-sm-primary" @click="saveSettings()">Save Changes</button>
                 </div>
 
-                <!-- Security Section -->
-                <div class="mb-8">
-                    <h3 class="text-lg font-medium mb-4 pb-2 border-b border-border">Security</h3>
-                    <div class="flex items-center gap-3">
-                        <label class="toggle">
-                            <input type="checkbox" x-model="allow_all_sites_for_extraction">
-                            <span class="toggle-slider"></span>
-                        </label>
-                        <div>
-                            <label class="font-medium cursor-pointer">Allow All Sites for Extraction</label>
-                            <small class="block text-muted text-sm">Allow extracting videos from any site yt-dlp supports. When disabled, only sites configured in the Sites tab are allowed.</small>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- InnerTube Section -->
-
-                <div class="mb-8">
-                    <h3 class="text-lg font-medium mb-4 pb-2 border-b border-border">InnerTube</h3>
-                    <div class="flex items-center gap-3 mb-2">
-                        <label class="toggle">
-                            <input type="checkbox" x-model="innertube_enabled">
-                            <span class="toggle-slider"></span>
-                        </label>
-                        <div>
-                            <label class="font-medium cursor-pointer">Enable InnerTube</label>
-                            <small class="block text-muted text-sm">Direct YouTube API access for comments, search suggestions, channel data, and feed — no Invidious needed</small>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Invidious Section -->
-                <div class="mb-8">
-                    <h3 class="text-lg font-medium mb-4 pb-2 border-b border-border">Invidious Proxy</h3>
-                    <div class="flex items-center gap-3 mb-4">
-                        <label class="toggle">
-                            <input type="checkbox" x-model="invidious_enabled">
-                            <span class="toggle-slider"></span>
-                        </label>
-                        <div>
-                            <label class="font-medium cursor-pointer">Enable Invidious Proxy</label>
-                            <small class="block text-muted text-sm">Master toggle — disables all Invidious features when off</small>
-                        </div>
-                    </div>
-                    <div class="mb-4">
-                        <label for="invidious-instance" class="block mb-2 font-medium">Instance URL</label>
-                        <input type="url" id="invidious-instance" placeholder="https://invidious.example.com" class="input-base" x-model="invidious_instance">
-                    </div>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div class="flex items-center gap-3">
-                            <label class="toggle">
-                                <input type="checkbox" x-model="invidious_proxy_videos">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <div>
-                                <label class="font-medium cursor-pointer">Proxy Video Requests</label>
-                                <small class="block text-muted text-sm">Use Invidious for video info (faster, but fewer formats)</small>
-                            </div>
-                        </div>
-                        <div class="flex items-center gap-3">
-                            <label class="toggle">
-                                <input type="checkbox" x-model="invidious_local_streams">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <div>
-                                <label class="font-medium cursor-pointer">Proxy Streams via Invidious</label>
-                                <small class="block text-muted text-sm">Proxy video through Invidious. Effective when the site's stream proxy is off.</small>
-                            </div>
-                        </div>
-                        <div class="flex items-center gap-3">
-                            <label class="toggle">
-                                <input type="checkbox" x-model="invidious_proxy_channels">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <div>
-                                <label class="font-medium cursor-pointer">Proxy Channel Requests</label>
-                                <small class="block text-muted text-sm">Use Invidious for channel info (faster, includes upload dates)</small>
-                            </div>
-                        </div>
-                        <div class="flex items-center gap-3">
-                            <label class="toggle">
-                                <input type="checkbox" x-model="invidious_proxy_channel_tabs">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <div>
-                                <label class="font-medium cursor-pointer">Proxy Channel Tabs</label>
-                                <small class="block text-muted text-sm">Use Invidious for playlists, shorts, streams tabs</small>
-                            </div>
-                        </div>
-                        <div class="flex items-center gap-3">
-                            <label class="toggle">
-                                <input type="checkbox" x-model="invidious_proxy_playlists">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <div>
-                                <label class="font-medium cursor-pointer">Proxy Playlist Requests</label>
-                                <small class="block text-muted text-sm">Use Invidious for playlist details (faster, includes descriptions)</small>
-                            </div>
-                        </div>
-                        <div class="flex items-center gap-3">
-                            <label class="toggle">
-                                <input type="checkbox" x-model="invidious_proxy_captions">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <div>
-                                <label class="font-medium cursor-pointer">Proxy Captions</label>
-                                <small class="block text-muted text-sm">Use Invidious for video captions (bypass Google blocking)</small>
-                            </div>
-                        </div>
-                        <div class="flex items-center gap-3">
-                            <label class="toggle">
-                                <input type="checkbox" x-model="invidious_proxy_thumbnails">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <div>
-                                <label class="font-medium cursor-pointer">Proxy Thumbnails</label>
-                                <small class="block text-muted text-sm">Rewrite thumbnail URLs to proxy through this server</small>
-                            </div>
-                        </div>
-                        <div class="flex items-center gap-3">
-                            <label class="toggle">
-                                <input type="checkbox" x-model="invidious_author_thumbnails">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <div>
-                                <label class="font-medium cursor-pointer">Fetch Author Thumbnails</label>
-                                <small class="block text-muted text-sm">Get channel avatars from Invidious (adds latency)</small>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
-                        <div>
-                            <label for="invidious-timeout" class="block mb-2 font-medium">Timeout (seconds)</label>
-                            <input type="number" id="invidious-timeout" min="5" max="60" class="input-base" x-model.number="invidious_timeout">
-                        </div>
-                        <div>
-                            <label for="invidious-max-retries" class="block mb-2 font-medium">Max Retries</label>
-                            <input type="number" id="invidious-max-retries" min="1" max="10" class="input-base" x-model.number="invidious_max_retries">
-                        </div>
-                        <div>
-                            <label for="invidious-retry-delay" class="block mb-2 font-medium">Retry Delay (seconds)</label>
-                            <input type="number" id="invidious-retry-delay" min="0.5" max="30" step="0.5" class="input-base" x-model.number="invidious_retry_delay">
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Feed Section -->
-                <div class="mb-8">
-                    <h3 class="text-lg font-medium mb-4 pb-2 border-b border-border">Feed Fetcher</h3>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                            <label for="feed-fetch-interval" class="block mb-2 font-medium">Fetch Interval (minutes)</label>
-                            <input type="number" id="feed-fetch-interval" min="5" max="1440" class="input-base" x-model.number="feed_fetch_interval_minutes">
-                            <small class="block mt-1 text-muted text-sm">Default: 360</small>
-                        </div>
-                        <div>
-                            <label for="feed-channel-delay" class="block mb-2 font-medium">Channel Delay (seconds)</label>
-                            <input type="number" id="feed-channel-delay" min="1" max="30" class="input-base" x-model.number="feed_channel_delay">
-                            <small class="block mt-1 text-muted text-sm">Delay between channel fetches</small>
-                        </div>
-                        <div>
-                            <label for="feed-max-videos" class="block mb-2 font-medium">Max Videos per Channel</label>
-                            <input type="number" id="feed-max-videos" min="10" max="100" class="input-base" x-model.number="feed_max_videos">
-                            <small class="block mt-1 text-muted text-sm">Videos cached per channel</small>
-                        </div>
-                        <div>
-                            <label for="feed-video-max-age" class="block mb-2 font-medium">Video Max Age (days)</label>
-                            <input type="number" id="feed-video-max-age" min="1" max="365" class="input-base" x-model.number="feed_video_max_age">
-                            <small class="block mt-1 text-muted text-sm">Days before cleanup</small>
-                        </div>
-                        <div>
-                            <label for="feed-channel-retention-days" class="block mb-2 font-medium">Deleted Channel Retention (days)</label>
-                            <input type="number" id="feed-channel-retention-days" min="1" max="30" step="1" class="input-base" x-model.number="feed_channel_retention_days">
-                            <small class="block mt-1 text-muted text-sm">Number of days to retain deleted channels before permanent cleanup (1–30 days).</small>
-                        </div>
-                    </div>
-                    <div class="mt-4">
-                        <div class="flex items-center gap-3">
-                            <label class="toggle">
-                                <input type="checkbox" x-model="feed_ytdlp_use_flat_playlist">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <div>
-                                <label class="font-medium cursor-pointer">Use yt-dlp Flat Playlist Mode</label>
-                                <small class="block text-muted text-sm">Enable faster yt-dlp fetching without extra details like publish dates (only affects fallback when Invidious is unavailable)</small>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="mt-4">
-                        <div class="flex items-center gap-3">
-                            <label class="toggle">
-                                <input type="checkbox" x-model="feed_fallback_ytdlp_on_414">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <div>
-                                <label class="font-medium cursor-pointer">Fallback to yt-dlp on 414 Errors</label>
-                                <small class="block text-muted text-sm">Automatically use yt-dlp when Invidious hits 414 pagination errors (allows fetching 100+ videos instead of ~60)</small>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="mt-4">
-                        <div class="flex items-center gap-3">
-                            <label class="toggle">
-                                <input type="checkbox" x-model="feed_fallback_ytdlp_on_error">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <div>
-                                <label class="font-medium cursor-pointer">Fallback to yt-dlp on Invidious Errors</label>
-                                <small class="block text-muted text-sm">Automatically use yt-dlp when Invidious fails after retries (500, 502, etc.)</small>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Network Section -->
-                <div class="mb-8">
-                    <h3 class="text-lg font-medium mb-4 pb-2 border-b border-border">Network</h3>
-                    <div class="flex items-center gap-3 mb-4">
-                        <label class="toggle">
-                            <input type="checkbox" x-model="yt_egress_proxy_enabled">
-                            <span class="toggle-slider"></span>
-                        </label>
-                        <div>
-                            <label class="font-medium cursor-pointer">Enable YouTube Egress Proxy</label>
-                            <small class="block text-muted text-sm">Routes yt-dlp and InnerTube YouTube traffic through this proxy.</small>
-                        </div>
-                    </div>
-                    <div class="mb-4">
-                        <label for="yt-egress-proxy" class="block mb-2 font-medium">YouTube Egress Proxy URL</label>
-                        <input type="text" id="yt-egress-proxy" placeholder="http://host:port or socks5://host:port" class="input-base" x-model="yt_egress_proxy" :disabled="!yt_egress_proxy_enabled">
-                        <small class="block text-muted text-sm mt-1">Auto-provisioned from <code>YT_EGRESS_PROXY</code> env var if set.</small>
-                    </div>
-                    <div class="mb-4">
-                        <label for="yt-ip-family" class="block mb-2 font-medium">YouTube IP Family</label>
-                        <select id="yt-ip-family" class="input-base" x-model="yt_ip_family">
-                            <option value="auto">Auto (default)</option>
-                            <option value="ipv4">Force IPv4</option>
-                            <option value="ipv6">Force IPv6</option>
+                <div class="settings-layout">
+                    <div class="settings-mobile-nav">
+                        <label for="settings-section-select" class="block mb-2 font-medium">Settings section</label>
+                        <select id="settings-section-select" class="input-base" x-model="activeSection">
+                            <template x-for="section in sections" :key="section.id">
+                                <option :value="section.id" x-text="section.label"></option>
+                            </template>
                         </select>
-                        <small class="block text-muted text-sm mt-1">Forces the IP family for YouTube traffic (yt-dlp, InnerTube, relay). Useful when your IPv4 is bot-flagged. Ignored while the egress proxy is enabled; forcing a family your host doesn't have breaks playback. Auto-provisioned from <code>YT_IP_FAMILY</code> env var if set.</small>
                     </div>
-                    <div class="flex items-center gap-3 mb-4">
-                        <label class="toggle">
-                            <input type="checkbox" x-model="yt_pot_enabled">
-                            <span class="toggle-slider"></span>
-                        </label>
-                        <div>
-                            <label class="font-medium cursor-pointer">Enable PO Token Provider (bgutil)</label>
-                            <small class="block text-muted text-sm">Lets yt-dlp fetch YouTube PO tokens — unblocks full formats on age-restricted videos. Auto-provisioned from <code>YT_POT_ENABLED</code> env var if set.</small>
+                    <nav class="settings-section-nav" role="tablist" aria-label="Settings sections"
+                         aria-orientation="vertical" @keydown="navigateSections($event)">
+                        <template x-for="section in sections" :key="section.id">
+                            <button type="button" class="settings-section-tab" role="tab"
+                                    :id="'settings-tab-' + section.id"
+                                    :aria-controls="'settings-panel-' + section.id"
+                                    :aria-selected="activeSection === section.id"
+                                    :tabindex="activeSection === section.id ? 0 : -1"
+                                    @click="activeSection = section.id" x-text="section.label">
+                            </button>
+                        </template>
+                    </nav>
+                    <div class="settings-content">
+                        <!-- Security Section -->
+                        <div id="settings-panel-security" class="settings-section-panel mb-4"
+                             role="tabpanel" aria-labelledby="settings-tab-security" tabindex="0"
+                             x-show="activeSection === 'security'" x-cloak>
+                            <h3 class="text-lg font-medium mb-4 pb-2 border-b border-border">Security</h3>
+                            <div class="flex items-center gap-3">
+                                <label class="toggle">
+                                    <input type="checkbox" x-model="allow_all_sites_for_extraction">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <div>
+                                    <label class="font-medium cursor-pointer">Allow All Sites for Extraction</label>
+                                    <small class="block text-muted text-sm">Allow extracting videos from any site yt-dlp supports. When disabled, only sites configured in the Sites tab are allowed.</small>
+                                </div>
+                            </div>
                         </div>
-                    </div>
-                    <div class="mb-4">
-                        <label for="yt-pot-provider-url" class="block mb-2 font-medium">PO Token Provider URL</label>
-                        <input type="text" id="yt-pot-provider-url" placeholder="http://host:4416 — leave empty for the bundled provider" class="input-base" x-model="yt_pot_provider_url" :disabled="!yt_pot_enabled">
-                        <small class="block text-muted text-sm mt-1">External bgutil provider base URL. Leave empty to use the provider bundled in the image (managed automatically). Auto-provisioned from <code>YT_POT_PROVIDER_URL</code> env var if set.</small>
-                    </div>
-                </div>
 
-                <!-- Search & Other Section -->
-                <div class="mb-8">
-                    <h3 class="text-lg font-medium mb-4 pb-2 border-b border-border">Other Settings</h3>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                            <label for="default-search-results" class="block mb-2 font-medium">Default Search Results</label>
-                            <input type="number" id="default-search-results" min="5" max="50" class="input-base" x-model.number="default_search_results">
-                        </div>
-                        <div>
-                            <label for="max-search-results" class="block mb-2 font-medium">Max Search Results</label>
-                            <input type="number" id="max-search-results" min="10" max="100" class="input-base" x-model.number="max_search_results">
-                        </div>
-                    </div>
-                </div>
+                        <!-- InnerTube Section -->
 
-                <!-- yt-dlp Section -->
-                <div class="mb-8">
-                    <h3 class="text-lg font-medium mb-4 pb-2 border-b border-border">yt-dlp Configuration</h3>
-                    <div>
-                        <label for="ytdlp-path" class="block mb-2 font-medium">yt-dlp Path</label>
-                        <input type="text" id="ytdlp-path" class="input-base" x-model="ytdlp_path">
-                        <small class="block mt-1 text-muted text-sm">Path to yt-dlp executable</small>
-                    </div>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                        <div>
-                            <label for="ytdlp-timeout" class="block mb-2 font-medium">Timeout (seconds)</label>
-                            <input type="number" id="ytdlp-timeout" min="10" max="600" class="input-base" x-model.number="ytdlp_timeout">
-                            <small class="block mt-1 text-muted text-sm">Max time for yt-dlp operations</small>
+                        <div id="settings-panel-innertube" class="settings-section-panel mb-4"
+                             role="tabpanel" aria-labelledby="settings-tab-innertube" tabindex="0"
+                             x-show="activeSection === 'innertube'" x-cloak>
+                            <h3 class="text-lg font-medium mb-4 pb-2 border-b border-border">InnerTube</h3>
+                            <div class="flex items-center gap-3 mb-2">
+                                <label class="toggle">
+                                    <input type="checkbox" x-model="innertube_enabled">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <div>
+                                    <label class="font-medium cursor-pointer">Enable InnerTube</label>
+                                    <small class="block text-muted text-sm">Direct YouTube API access for comments, search suggestions, channel data, and feed — no Invidious needed</small>
+                                </div>
+                            </div>
                         </div>
-                        <div>
-                            <label for="proxy-download-max-age" class="block mb-2 font-medium">Download Retention (hours)</label>
-                            <input type="number" id="proxy-download-max-age" min="1" max="168" class="input-base" x-model.number="proxy_download_max_age_hours">
-                            <small class="block mt-1 text-muted text-sm">How long to keep fast downloads (Default: 24)</small>
-                        </div>
-                        <div>
-                            <label for="proxy-max-downloads" class="block mb-2 font-medium">Max Concurrent Downloads</label>
-                            <input type="number" id="proxy-max-downloads" min="1" max="20" class="input-base" x-model.number="proxy_max_concurrent_downloads">
-                            <small class="block mt-1 text-muted text-sm">Concurrent fast download limit (requires restart, Default: 3)</small>
-                        </div>
-                    </div>
-                </div>
 
-                <!-- Rate Limiting Section -->
-                <div class="mb-8">
-                    <h3 class="text-lg font-medium mb-4 pb-2 border-b border-border">Rate Limiting</h3>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                            <label for="rate-limit-window" class="block mb-2 font-medium">Window (seconds)</label>
-                            <input type="number" id="rate-limit-window" min="10" max="600" class="input-base" x-model.number="rate_limit_window">
-                            <small class="block mt-1 text-muted text-sm">Time window for tracking failed login attempts (Default: 60)</small>
+                        <!-- Invidious Section -->
+                        <div id="settings-panel-invidious" class="settings-section-panel mb-4"
+                             role="tabpanel" aria-labelledby="settings-tab-invidious" tabindex="0"
+                             x-show="activeSection === 'invidious'" x-cloak>
+                            <h3 class="text-lg font-medium mb-4 pb-2 border-b border-border">Invidious Proxy</h3>
+                            <div class="flex items-center gap-3 mb-4">
+                                <label class="toggle">
+                                    <input type="checkbox" x-model="invidious_enabled">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <div>
+                                    <label class="font-medium cursor-pointer">Enable Invidious Proxy</label>
+                                    <small class="block text-muted text-sm">Master toggle — disables all Invidious features when off</small>
+                                </div>
+                            </div>
+                            <div class="mb-4">
+                                <label for="invidious-instance" class="block mb-2 font-medium">Instance URL</label>
+                                <input type="url" id="invidious-instance" placeholder="https://invidious.example.com" class="input-base" x-model="invidious_instance">
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div class="flex items-center gap-3">
+                                    <label class="toggle">
+                                        <input type="checkbox" x-model="invidious_proxy_videos">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <div>
+                                        <label class="font-medium cursor-pointer">Proxy Video Requests</label>
+                                        <small class="block text-muted text-sm">Use Invidious for video info (faster, but fewer formats)</small>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <label class="toggle">
+                                        <input type="checkbox" x-model="invidious_local_streams">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <div>
+                                        <label class="font-medium cursor-pointer">Proxy Streams via Invidious</label>
+                                        <small class="block text-muted text-sm">Proxy video through Invidious. Effective when the site's stream proxy is off.</small>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <label class="toggle">
+                                        <input type="checkbox" x-model="invidious_proxy_channels">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <div>
+                                        <label class="font-medium cursor-pointer">Proxy Channel Requests</label>
+                                        <small class="block text-muted text-sm">Use Invidious for channel info (faster, includes upload dates)</small>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <label class="toggle">
+                                        <input type="checkbox" x-model="invidious_proxy_channel_tabs">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <div>
+                                        <label class="font-medium cursor-pointer">Proxy Channel Tabs</label>
+                                        <small class="block text-muted text-sm">Use Invidious for playlists, shorts, streams tabs</small>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <label class="toggle">
+                                        <input type="checkbox" x-model="invidious_proxy_playlists">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <div>
+                                        <label class="font-medium cursor-pointer">Proxy Playlist Requests</label>
+                                        <small class="block text-muted text-sm">Use Invidious for playlist details (faster, includes descriptions)</small>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <label class="toggle">
+                                        <input type="checkbox" x-model="invidious_proxy_captions">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <div>
+                                        <label class="font-medium cursor-pointer">Proxy Captions</label>
+                                        <small class="block text-muted text-sm">Use Invidious for video captions (bypass Google blocking)</small>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <label class="toggle">
+                                        <input type="checkbox" x-model="invidious_proxy_thumbnails">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <div>
+                                        <label class="font-medium cursor-pointer">Proxy Thumbnails</label>
+                                        <small class="block text-muted text-sm">Rewrite thumbnail URLs to proxy through this server</small>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <label class="toggle">
+                                        <input type="checkbox" x-model="invidious_author_thumbnails">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <div>
+                                        <label class="font-medium cursor-pointer">Fetch Author Thumbnails</label>
+                                        <small class="block text-muted text-sm">Get channel avatars from Invidious (adds latency)</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
+                                <div>
+                                    <label for="invidious-timeout" class="block mb-2 font-medium">Timeout (seconds)</label>
+                                    <input type="number" id="invidious-timeout" min="5" max="60" class="input-base" x-model.number="invidious_timeout">
+                                </div>
+                                <div>
+                                    <label for="invidious-max-retries" class="block mb-2 font-medium">Max Retries</label>
+                                    <input type="number" id="invidious-max-retries" min="1" max="10" class="input-base" x-model.number="invidious_max_retries">
+                                </div>
+                                <div>
+                                    <label for="invidious-retry-delay" class="block mb-2 font-medium">Retry Delay (seconds)</label>
+                                    <input type="number" id="invidious-retry-delay" min="0.5" max="30" step="0.5" class="input-base" x-model.number="invidious_retry_delay">
+                                </div>
+                            </div>
                         </div>
-                        <div>
-                            <label for="rate-limit-max-failures" class="block mb-2 font-medium">Max Failures</label>
-                            <input type="number" id="rate-limit-max-failures" min="1" max="100" class="input-base" x-model.number="rate_limit_max_failures">
-                            <small class="block mt-1 text-muted text-sm">Max failed login attempts before lockout (Default: 5)</small>
+
+                        <!-- Feed Section -->
+                        <div id="settings-panel-feed" class="settings-section-panel mb-4"
+                             role="tabpanel" aria-labelledby="settings-tab-feed" tabindex="0"
+                             x-show="activeSection === 'feed'" x-cloak>
+                            <h3 class="text-lg font-medium mb-4 pb-2 border-b border-border">Feed Fetcher</h3>
+                            <fieldset class="mb-4">
+                                <legend class="font-medium mb-2">Video metadata</legend>
+                                <div class="flex items-center gap-3 mb-4">
+                                    <label class="toggle">
+                                        <input id="metadata-sync-enabled" type="checkbox" x-model="metadata_sync_enabled" aria-label="Enable video metadata synchronization">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <label for="metadata-sync-enabled">Synchronize original, French and English titles and descriptions</label>
+                                </div>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label for="metadata-sync-interval" class="block mb-2 font-medium">Target renewal interval (hours)</label>
+                                        <input id="metadata-sync-interval" type="number" min="1" max="72" step="1" class="input-base" x-model.number="metadata_sync_interval_hours" aria-describedby="metadata-sync-help">
+                                    </div>
+                                    <div>
+                                        <label for="metadata-sync-budget" class="block mb-2 font-medium">Maximum HTTP attempts per hour</label>
+                                        <input id="metadata-sync-budget" type="number" min="1" max="10000" step="1" class="input-base" x-model.number="metadata_sync_max_http_per_hour" aria-describedby="metadata-sync-help">
+                                    </div>
+                                </div>
+                                <p id="metadata-sync-help" class="mt-2 text-muted text-sm">Default: 24 hours, 150 HTTP attempts per hour. The interval is a renewal target; the shared HTTP budget limits actual capacity, including retries. Changes take effect when settings are saved.</p>
+                                <button type="button" class="btn-secondary mt-4" @click="loadMetadataSyncStatus()">Refresh metadata job status</button>
+                                <div x-show="metadataSyncStatus" class="mt-2 text-sm" role="status" aria-live="polite">
+                                    <dl class="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                        <div><dt>State</dt><dd x-text="metadataSyncStatus ? (metadataSyncStatus.enabled ? metadataSyncStatus.state : 'disabled') : '—'"></dd></div>
+                                        <div><dt>Last run</dt><dd x-text="metadataSyncStatus?.last_run || '—'"></dd></div>
+                                        <div><dt>Last success</dt><dd x-text="metadataSyncStatus?.last_success || '—'"></dd></div>
+                                        <div><dt>Successful / failed / partial</dt><dd x-text="metadataSyncStatus ? `${metadataSyncStatus.successes} / ${metadataSyncStatus.failures} / ${metadataSyncStatus.partials}` : '—'"></dd></div>
+                                        <div><dt>Pending variants</dt><dd x-text="metadataSyncStatus?.pending ?? '—'"></dd></div>
+                                        <div><dt>Oldest deadline</dt><dd x-text="metadataSyncStatus?.oldest_due || '—'"></dd></div>
+                                        <div><dt>Hourly HTTP budget used</dt><dd x-text="metadataSyncStatus ? `${metadataSyncStatus.http_used} / ${metadataSyncStatus.http_limit}` : '—'"></dd></div>
+                                        <div><dt>Provider paused until</dt><dd x-text="metadataSyncStatus?.provider_paused_until || '—'"></dd></div>
+                                        <div><dt>Next eligible run</dt><dd x-text="metadataSyncStatus?.next_resume || '—'"></dd></div>
+                                    </dl>
+                                </div>
+                            </fieldset>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label for="feed-fetch-interval" class="block mb-2 font-medium">Fetch Interval (minutes)</label>
+                                    <input type="number" id="feed-fetch-interval" min="5" max="1440" class="input-base" x-model.number="feed_fetch_interval_minutes">
+                                    <small class="block mt-1 text-muted text-sm">Default: 360</small>
+                                </div>
+                                <div>
+                                    <label for="feed-channel-delay" class="block mb-2 font-medium">Channel Delay (seconds)</label>
+                                    <input type="number" id="feed-channel-delay" min="1" max="30" class="input-base" x-model.number="feed_channel_delay">
+                                    <small class="block mt-1 text-muted text-sm">Delay between channel fetches</small>
+                                </div>
+                                <div>
+                                    <label for="feed-max-videos" class="block mb-2 font-medium">Max Videos per Channel</label>
+                                    <input type="number" id="feed-max-videos" min="10" max="100" class="input-base" x-model.number="feed_max_videos">
+                                    <small class="block mt-1 text-muted text-sm">Videos cached per channel</small>
+                                </div>
+                                <div>
+                                    <label for="feed-video-max-age" class="block mb-2 font-medium">Video Max Age (days)</label>
+                                    <input type="number" id="feed-video-max-age" min="1" max="365" class="input-base" x-model.number="feed_video_max_age">
+                                    <small class="block mt-1 text-muted text-sm">Days before cleanup</small>
+                                </div>
+                                <div>
+                                    <label for="feed-channel-retention-days" class="block mb-2 font-medium">Deleted Channel Retention (days)</label>
+                                    <input type="number" id="feed-channel-retention-days" min="1" max="30" step="1" class="input-base" x-model.number="feed_channel_retention_days">
+                                    <small class="block mt-1 text-muted text-sm">Number of days to retain deleted channels before permanent cleanup (1–30 days).</small>
+                                </div>
+                            </div>
+                            <div class="mt-4">
+                                <div class="flex items-center gap-3">
+                                    <label class="toggle">
+                                        <input type="checkbox" x-model="feed_ytdlp_use_flat_playlist">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <div>
+                                        <label class="font-medium cursor-pointer">Use yt-dlp Flat Playlist Mode</label>
+                                        <small class="block text-muted text-sm">Enable faster yt-dlp fetching without extra details like publish dates (only affects fallback when Invidious is unavailable)</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mt-4">
+                                <div class="flex items-center gap-3">
+                                    <label class="toggle">
+                                        <input type="checkbox" x-model="feed_fallback_ytdlp_on_414">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <div>
+                                        <label class="font-medium cursor-pointer">Fallback to yt-dlp on 414 Errors</label>
+                                        <small class="block text-muted text-sm">Automatically use yt-dlp when Invidious hits 414 pagination errors (allows fetching 100+ videos instead of ~60)</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mt-4">
+                                <div class="flex items-center gap-3">
+                                    <label class="toggle">
+                                        <input type="checkbox" x-model="feed_fallback_ytdlp_on_error">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <div>
+                                        <label class="font-medium cursor-pointer">Fallback to yt-dlp on Invidious Errors</label>
+                                        <small class="block text-muted text-sm">Automatically use yt-dlp when Invidious fails after retries (500, 502, etc.)</small>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        <div>
-                            <label for="rate-limit-cleanup" class="block mb-2 font-medium">Cleanup Interval (minutes)</label>
-                            <input type="number" id="rate-limit-cleanup" min="1" max="60" class="input-base" x-model.number="rate_limit_cleanup_interval_minutes">
-                            <small class="block mt-1 text-muted text-sm">How often stale rate-limit entries are purged (Default: 5)</small>
+
+                        <!-- Network Section -->
+                        <div id="settings-panel-network" class="settings-section-panel mb-4"
+                             role="tabpanel" aria-labelledby="settings-tab-network" tabindex="0"
+                             x-show="activeSection === 'network'" x-cloak>
+                            <h3 class="text-lg font-medium mb-4 pb-2 border-b border-border">Network</h3>
+                            <div class="flex items-center gap-3 mb-4">
+                                <label class="toggle">
+                                    <input type="checkbox" x-model="yt_egress_proxy_enabled">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <div>
+                                    <label class="font-medium cursor-pointer">Enable YouTube Egress Proxy</label>
+                                    <small class="block text-muted text-sm">Routes yt-dlp and InnerTube YouTube traffic through this proxy.</small>
+                                </div>
+                            </div>
+                            <div class="mb-4">
+                                <label for="yt-egress-proxy" class="block mb-2 font-medium">YouTube Egress Proxy URL</label>
+                                <input type="text" id="yt-egress-proxy" placeholder="http://host:port or socks5://host:port" class="input-base" x-model="yt_egress_proxy" :disabled="!yt_egress_proxy_enabled">
+                                <small class="block text-muted text-sm mt-1">Auto-provisioned from <code>YT_EGRESS_PROXY</code> env var if set.</small>
+                            </div>
+                            <div class="mb-4">
+                                <label for="yt-ip-family" class="block mb-2 font-medium">YouTube IP Family</label>
+                                <select id="yt-ip-family" class="input-base" x-model="yt_ip_family">
+                                    <option value="auto">Auto (default)</option>
+                                    <option value="ipv4">Force IPv4</option>
+                                    <option value="ipv6">Force IPv6</option>
+                                </select>
+                                <small class="block text-muted text-sm mt-1">Forces the IP family for YouTube traffic (yt-dlp, InnerTube, relay). Useful when your IPv4 is bot-flagged. Ignored while the egress proxy is enabled; forcing a family your host doesn't have breaks playback. Auto-provisioned from <code>YT_IP_FAMILY</code> env var if set.</small>
+                            </div>
+                            <div class="flex items-center gap-3 mb-4">
+                                <label class="toggle">
+                                    <input type="checkbox" x-model="yt_pot_enabled">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <div>
+                                    <label class="font-medium cursor-pointer">Enable PO Token Provider (bgutil)</label>
+                                    <small class="block text-muted text-sm">Lets yt-dlp fetch YouTube PO tokens — unblocks full formats on age-restricted videos. Auto-provisioned from <code>YT_POT_ENABLED</code> env var if set.</small>
+                                </div>
+                            </div>
+                            <div class="mb-4">
+                                <label for="yt-pot-provider-url" class="block mb-2 font-medium">PO Token Provider URL</label>
+                                <input type="text" id="yt-pot-provider-url" placeholder="http://host:4416 — leave empty for the bundled provider" class="input-base" x-model="yt_pot_provider_url" :disabled="!yt_pot_enabled">
+                                <small class="block text-muted text-sm mt-1">External bgutil provider base URL. Leave empty to use the provider bundled in the image (managed automatically). Auto-provisioned from <code>YT_POT_PROVIDER_URL</code> env var if set.</small>
+                            </div>
+                        </div>
+
+                        <!-- Search & Other Section -->
+                        <div id="settings-panel-other" class="settings-section-panel mb-4"
+                             role="tabpanel" aria-labelledby="settings-tab-other" tabindex="0"
+                             x-show="activeSection === 'other'" x-cloak>
+                            <h3 class="text-lg font-medium mb-4 pb-2 border-b border-border">Other Settings</h3>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label for="default-search-results" class="block mb-2 font-medium">Default Search Results</label>
+                                    <input type="number" id="default-search-results" min="5" max="50" class="input-base" x-model.number="default_search_results">
+                                </div>
+                                <div>
+                                    <label for="max-search-results" class="block mb-2 font-medium">Max Search Results</label>
+                                    <input type="number" id="max-search-results" min="10" max="100" class="input-base" x-model.number="max_search_results">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- yt-dlp Section -->
+                        <div id="settings-panel-ytdlp" class="settings-section-panel mb-4"
+                             role="tabpanel" aria-labelledby="settings-tab-ytdlp" tabindex="0"
+                             x-show="activeSection === 'ytdlp'" x-cloak>
+                            <h3 class="text-lg font-medium mb-4 pb-2 border-b border-border">yt-dlp Configuration</h3>
+                            <div>
+                                <label for="ytdlp-path" class="block mb-2 font-medium">yt-dlp Path</label>
+                                <input type="text" id="ytdlp-path" class="input-base" x-model="ytdlp_path">
+                                <small class="block mt-1 text-muted text-sm">Path to yt-dlp executable</small>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                                <div>
+                                    <label for="ytdlp-timeout" class="block mb-2 font-medium">Timeout (seconds)</label>
+                                    <input type="number" id="ytdlp-timeout" min="10" max="600" class="input-base" x-model.number="ytdlp_timeout">
+                                    <small class="block mt-1 text-muted text-sm">Max time for yt-dlp operations</small>
+                                </div>
+                                <div>
+                                    <label for="proxy-download-max-age" class="block mb-2 font-medium">Download Retention (hours)</label>
+                                    <input type="number" id="proxy-download-max-age" min="1" max="168" class="input-base" x-model.number="proxy_download_max_age_hours">
+                                    <small class="block mt-1 text-muted text-sm">How long to keep fast downloads (Default: 24)</small>
+                                </div>
+                                <div>
+                                    <label for="proxy-max-downloads" class="block mb-2 font-medium">Max Concurrent Downloads</label>
+                                    <input type="number" id="proxy-max-downloads" min="1" max="20" class="input-base" x-model.number="proxy_max_concurrent_downloads">
+                                    <small class="block mt-1 text-muted text-sm">Concurrent fast download limit (requires restart, Default: 3)</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Rate Limiting Section -->
+                        <div id="settings-panel-rate-limiting" class="settings-section-panel mb-4"
+                             role="tabpanel" aria-labelledby="settings-tab-rate-limiting" tabindex="0"
+                             x-show="activeSection === 'rate-limiting'" x-cloak>
+                            <h3 class="text-lg font-medium mb-4 pb-2 border-b border-border">Rate Limiting</h3>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label for="rate-limit-window" class="block mb-2 font-medium">Window (seconds)</label>
+                                    <input type="number" id="rate-limit-window" min="10" max="600" class="input-base" x-model.number="rate_limit_window">
+                                    <small class="block mt-1 text-muted text-sm">Time window for tracking failed login attempts (Default: 60)</small>
+                                </div>
+                                <div>
+                                    <label for="rate-limit-max-failures" class="block mb-2 font-medium">Max Failures</label>
+                                    <input type="number" id="rate-limit-max-failures" min="1" max="100" class="input-base" x-model.number="rate_limit_max_failures">
+                                    <small class="block mt-1 text-muted text-sm">Max failed login attempts before lockout (Default: 5)</small>
+                                </div>
+                                <div>
+                                    <label for="rate-limit-cleanup" class="block mb-2 font-medium">Cleanup Interval (minutes)</label>
+                                    <input type="number" id="rate-limit-cleanup" min="1" max="60" class="input-base" x-model.number="rate_limit_cleanup_interval_minutes">
+                                    <small class="block mt-1 text-muted text-sm">How often stale rate-limit entries are purged (Default: 5)</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Cache Section -->
+                        <div id="settings-panel-cache" class="settings-section-panel mb-4"
+                             role="tabpanel" aria-labelledby="settings-tab-cache" tabindex="0"
+                             x-show="activeSection === 'cache'" x-cloak>
+                            <h3 class="text-lg font-medium mb-4 pb-2 border-b border-border">Cache TTL (seconds)</h3>
+                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                <div>
+                                    <label for="cache-video-ttl" class="block mb-2 font-medium">Video Metadata</label>
+                                    <input type="number" id="cache-video-ttl" min="60" max="86400" class="input-base" x-model.number="cache_video_ttl">
+                                    <small class="block mt-1 text-muted text-sm">Default: 3600 (1 hour)</small>
+                                </div>
+                                <div>
+                                    <label for="cache-extract-ttl" class="block mb-2 font-medium">Extract Cache</label>
+                                    <input type="number" id="cache-extract-ttl" min="60" max="7200" class="input-base" x-model.number="cache_extract_ttl">
+                                    <small class="block mt-1 text-muted text-sm">Default: 900 (15 min)</small>
+                                </div>
+                                <div>
+                                    <label for="cache-search-ttl" class="block mb-2 font-medium">Search Results</label>
+                                    <input type="number" id="cache-search-ttl" min="60" max="7200" class="input-base" x-model.number="cache_search_ttl">
+                                    <small class="block mt-1 text-muted text-sm">Default: 900 (15 min)</small>
+                                </div>
+                                <div>
+                                    <label for="cache-channel-ttl" class="block mb-2 font-medium">Channel Info</label>
+                                    <input type="number" id="cache-channel-ttl" min="60" max="86400" class="input-base" x-model.number="cache_channel_ttl">
+                                    <small class="block mt-1 text-muted text-sm">Default: 1800 (30 min)</small>
+                                </div>
+                                <div>
+                                    <label for="cache-avatar-ttl" class="block mb-2 font-medium">Channel Avatars</label>
+                                    <input type="number" id="cache-avatar-ttl" min="3600" max="604800" class="input-base" x-model.number="cache_avatar_ttl">
+                                    <small class="block mt-1 text-muted text-sm">Default: 86400 (24 hours)</small>
+                                </div>
+                                <div>
+                                    <label for="dns-cache-ttl" class="block mb-2 font-medium">DNS Cache TTL</label>
+                                    <input type="number" id="dns-cache-ttl" min="5" max="3600" class="input-base" x-model.number="dns_cache_ttl">
+                                    <small class="block mt-1 text-muted text-sm">How long DNS lookups are cached (Default: 30)</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Bottom Save -->
+                        <div class="settings-save-footer flex justify-end pt-4 mt-4 border-t border-border">
+                            <button class="btn-sm-primary" @click="saveSettings()">Save Changes</button>
                         </div>
                     </div>
-                </div>
-
-                <!-- Cache Section -->
-                <div class="mb-4">
-                    <h3 class="text-lg font-medium mb-4 pb-2 border-b border-border">Cache TTL (seconds)</h3>
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        <div>
-                            <label for="cache-video-ttl" class="block mb-2 font-medium">Video Metadata</label>
-                            <input type="number" id="cache-video-ttl" min="60" max="86400" class="input-base" x-model.number="cache_video_ttl">
-                            <small class="block mt-1 text-muted text-sm">Default: 3600 (1 hour)</small>
-                        </div>
-                        <div>
-                            <label for="cache-extract-ttl" class="block mb-2 font-medium">Extract Cache</label>
-                            <input type="number" id="cache-extract-ttl" min="60" max="7200" class="input-base" x-model.number="cache_extract_ttl">
-                            <small class="block mt-1 text-muted text-sm">Default: 900 (15 min)</small>
-                        </div>
-                        <div>
-                            <label for="cache-search-ttl" class="block mb-2 font-medium">Search Results</label>
-                            <input type="number" id="cache-search-ttl" min="60" max="7200" class="input-base" x-model.number="cache_search_ttl">
-                            <small class="block mt-1 text-muted text-sm">Default: 900 (15 min)</small>
-                        </div>
-                        <div>
-                            <label for="cache-channel-ttl" class="block mb-2 font-medium">Channel Info</label>
-                            <input type="number" id="cache-channel-ttl" min="60" max="86400" class="input-base" x-model.number="cache_channel_ttl">
-                            <small class="block mt-1 text-muted text-sm">Default: 1800 (30 min)</small>
-                        </div>
-                        <div>
-                            <label for="cache-avatar-ttl" class="block mb-2 font-medium">Channel Avatars</label>
-                            <input type="number" id="cache-avatar-ttl" min="3600" max="604800" class="input-base" x-model.number="cache_avatar_ttl">
-                            <small class="block mt-1 text-muted text-sm">Default: 86400 (24 hours)</small>
-                        </div>
-                        <div>
-                            <label for="dns-cache-ttl" class="block mb-2 font-medium">DNS Cache TTL</label>
-                            <input type="number" id="dns-cache-ttl" min="5" max="3600" class="input-base" x-model.number="dns_cache_ttl">
-                            <small class="block mt-1 text-muted text-sm">How long DNS lookups are cached (Default: 30)</small>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Bottom Save -->
-                <div class="flex justify-end pt-4 mt-4 border-t border-border">
-                    <button class="btn-sm-primary" @click="saveSettings()">Save Changes</button>
                 </div>
             </div>
         </div>

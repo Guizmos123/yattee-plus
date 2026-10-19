@@ -35,6 +35,9 @@ class WatchedChannelResponse(BaseModel):
 
 
 class SettingsResponse(BaseModel):
+    metadata_sync_enabled: bool
+    metadata_sync_interval_hours: int
+    metadata_sync_max_http_per_hour: int
     ytdlp_path: str
     ytdlp_timeout: int
     cache_video_ttl: int
@@ -81,6 +84,9 @@ class SettingsResponse(BaseModel):
 
 
 class SettingsUpdate(BaseModel):
+    metadata_sync_enabled: Optional[bool] = Field(default=None, strict=True)
+    metadata_sync_interval_hours: Optional[int] = Field(default=None, ge=1, le=72, strict=True)
+    metadata_sync_max_http_per_hour: Optional[int] = Field(default=None, ge=1, le=10000, strict=True)
     ytdlp_path: Optional[str] = None
     ytdlp_timeout: Optional[int] = None
     cache_video_ttl: Optional[int] = None
@@ -155,6 +161,10 @@ async def update_settings(data: SettingsUpdate, admin: dict = Depends(get_curren
         raise HTTPException(status_code=400, detail=str(e))
 
     settings_module.save_settings(new_settings)
+    if any(k.startswith("metadata_sync_") or k == "innertube_enabled" for k in update_data):
+        import metadata_sync
+
+        metadata_sync.notify_settings_changed()
 
     # Reset caches if cache settings changed
     cache_keys = [
@@ -192,6 +202,14 @@ async def update_settings(data: SettingsUpdate, admin: dict = Depends(get_curren
             pass
 
     return SettingsResponse(**new_settings.model_dump())
+
+
+@router.get("/api/metadata-sync/status")
+async def metadata_sync_status(admin: dict = Depends(get_current_admin)):
+    """Technical job state only; no credentials, HTTP bodies or URLs."""
+    from database.repositories.metadata_sync import get_status
+
+    return get_status(settings_module.load_settings())
 
 
 # =============================================================================

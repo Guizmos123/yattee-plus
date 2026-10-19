@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import sqlite3
 from html import escape
 from typing import Literal, Optional
 
@@ -19,7 +20,9 @@ from converters import (
     ytdlp_to_video_response,
 )
 from innertube import InnerTubeError
-from innertube._video import get_video_localized_metadata, get_video_original_metadata
+from innertube._localization import _read_stored_metadata
+from innertube._video import get_video_localized_metadata
+from metadata_selection import select_stored_metadata
 from models import ChannelExtractResponse, Thumbnail, VideoResponse
 from settings import get_settings
 from utils import get_base_url
@@ -87,9 +90,9 @@ async def get_video(
         None,
         description=(
             "Video title/description preference. Omitted: preserve historical metadata. "
-            "original: prefer identifiable /player videoDetails text; fr/en: request localized /next text. "
+            "original: prefer /player videoDetails candidates; fr/en: request /next text in that language context. "
             "Unavailable fields keep historical values, whose language may be unknown. "
-            "Ignored with invidious=true, which never calls InnerTube."
+            "With invidious=true, only locally stored candidates are applied; no InnerTube calls."
         ),
     ),
 ):
@@ -243,32 +246,33 @@ async def _select_video_metadata(
 ) -> VideoResponse:
     """Apply explicitly requested text to a copy after provider extraction.
 
-    Omitted lang and forced Invidious preserve the complete historical response.
+    Omitted lang preserves the complete historical response. Forced Invidious
+    applies local candidates only, without changing the extraction provider.
     Unavailable fields retain historical text without claiming it is original.
-    Playback and authors are never changed here. Only hybrid recommendations
-    can receive text from the same localized /next lookup, matched by videoId.
+    Playback and authors are never changed here. Hybrid recommendations retain
+    their separate historical localization, outside shared main-text acquisition.
     """
-    if lang is None or invidious_only or not innertube.is_enabled():
+    if lang is None:
         return response
 
-    localize_recommendations = (
-        lang in ("fr", "en")
-        and getattr(response, "extractionMethod", None) == "hybrid"
-        and bool(response.recommendedVideos)
-    )
+    stored = _read_stored_metadata([video_id], lang)
+    provider = {"title": response.title, "description": response.description}
+    variants = {language: stored.get((video_id, language), {}) for language in (lang, "original")}
+    metadata = select_stored_metadata(provider, lang, variants)
+    # An absent requested variant differs from a provider/original fallback.
+    # Presence is independent of display freshness: only the job refreshes stale
+    # but present text, using exactly the unchanged LANG-02/META-03 selection.
+    present = select_stored_metadata({}, lang, {lang: variants.get(lang, {})})
     try:
-        if lang == "original":
-            metadata = await get_video_original_metadata(video_id)
-        elif localize_recommendations:
-            metadata = await get_video_localized_metadata(video_id, lang, include_recommendations=True)
-        else:
-            metadata = await get_video_localized_metadata(video_id, lang)
-    except (InnerTubeError, AttributeError, TypeError, ValueError) as error:
+        acquired = None
+        if len(present) < 2 and not invidious_only and innertube.is_enabled():
+            acquired = await _acquire_video_metadata(video_id, lang, provider)
+        if isinstance(acquired, dict):
+            metadata.update(
+                {field: acquired[field] for field in ("title", "description") if isinstance(acquired.get(field), str)}
+            )
+    except (InnerTubeError, sqlite3.Error, AttributeError, TypeError, ValueError) as error:
         logger.warning("[Videos] Metadata preference unavailable for %s (%s): %s", video_id, lang, error)
-        return response
-
-    if not isinstance(metadata, dict):
-        return response
     updates = {}
     if isinstance(metadata.get("title"), str):
         updates["title"] = metadata["title"]
@@ -276,19 +280,62 @@ async def _select_video_metadata(
         description = metadata["description"]
         updates["description"] = description
         updates["descriptionHtml"] = escape(description).replace("\n", "<br>")
-    recommendations = metadata.get("recommendedVideos")
-    if localize_recommendations and isinstance(recommendations, dict) and recommendations:
-        selected = []
-        for video in response.recommendedVideos:
-            texts = recommendations.get(video.videoId)
-            text_updates = (
-                {field: texts[field] for field in ("title", "description") if isinstance(texts.get(field), str)}
-                if isinstance(texts, dict)
-                else {}
-            )
-            selected.append(video.model_copy(update=text_updates) if text_updates else video)
-        updates["recommendedVideos"] = selected
+    # Preserve the existing recommendation policy, explicitly excluded from
+    # META-04. Its legacy /next/cache remains separate; never use its main texts
+    # to bypass the shared budget, leases, persistence or display selection.
+    if (
+        lang in ("fr", "en")
+        and not invidious_only
+        and innertube.is_enabled()
+        and getattr(response, "extractionMethod", None) == "hybrid"
+        and response.recommendedVideos
+    ):
+        try:
+            localized = await get_video_localized_metadata(video_id, lang, include_recommendations=True)
+            recommendations = localized.get("recommendedVideos") if isinstance(localized, dict) else None
+            if isinstance(recommendations, dict) and recommendations:
+                selected = []
+                for video in response.recommendedVideos:
+                    texts = recommendations.get(video.videoId)
+                    text_updates = (
+                        {field: texts[field] for field in ("title", "description") if isinstance(texts.get(field), str)}
+                        if isinstance(texts, dict)
+                        else {}
+                    )
+                    selected.append(video.model_copy(update=text_updates) if text_updates else video)
+                updates["recommendedVideos"] = selected
+        except (InnerTubeError, AttributeError, TypeError, ValueError) as error:
+            logger.warning("[Videos] Recommendation preference unavailable for %s (%s): %s", video_id, lang, error)
     return response.model_copy(update=updates) if updates else response
+
+
+async def _acquire_video_metadata(video_id: str, language: str, provider: dict) -> dict:
+    """Use shared acquisition, then apply the normal selector to persisted facts.
+
+    A follower waits at most two seconds for an existing acquisition, without
+    reclaiming or retrying it. Slow/failed producers retain the provider fallback.
+    Lazy imports keep the historical no-lang and forced-provider paths isolated.
+    """
+    from database.repositories.metadata_acquisitions import CoordinationError, MetadataStore
+    from innertube._metadata import MetadataAcquirer
+    from metadata_types import MetadataError
+
+    store = MetadataStore()
+    result = await MetadataAcquirer(store, on_demand=True, cache_ttl=0).acquire("youtube", video_id, language)
+    if result.error == MetadataError.LEASE:
+        deadline = asyncio.get_running_loop().time() + 2
+        try:
+            while asyncio.get_running_loop().time() < deadline:
+                entry = store.read("youtube", video_id, language)
+                if not entry or entry["owner"] is None:
+                    break
+                await asyncio.sleep(0.05)
+        except CoordinationError:
+            pass
+    stored = _read_stored_metadata([video_id], language)
+    return select_stored_metadata(
+        provider, language, {candidate: stored.get((video_id, candidate), {}) for candidate in (language, "original")}
+    )
 
 
 async def _get_video_hybrid(

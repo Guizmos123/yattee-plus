@@ -1,6 +1,33 @@
 document.addEventListener('alpine:init', () => {
     Alpine.data('settingsManager', () => ({
         loading: true,
+        activeSection: 'security',
+        sections: [
+            { id: 'security', label: 'Security' },
+            { id: 'innertube', label: 'InnerTube' },
+            { id: 'invidious', label: 'Invidious Proxy' },
+            { id: 'feed', label: 'Feed Fetcher' },
+            { id: 'network', label: 'Network' },
+            { id: 'other', label: 'Other Settings' },
+            { id: 'ytdlp', label: 'yt-dlp Configuration' },
+            { id: 'rate-limiting', label: 'Rate Limiting' },
+            { id: 'cache', label: 'Cache TTL (seconds)' }
+        ],
+
+        navigateSections(event) {
+            const index = this.sections.findIndex(section => section.id === this.activeSection);
+            let next;
+            switch (event.key) {
+                case 'ArrowDown': next = (index + 1) % this.sections.length; break;
+                case 'ArrowUp': next = (index - 1 + this.sections.length) % this.sections.length; break;
+                case 'Home': next = 0; break;
+                case 'End': next = this.sections.length - 1; break;
+                default: return;
+            }
+            event.preventDefault();
+            this.activeSection = this.sections[next].id;
+            this.$nextTick(() => document.getElementById(`settings-tab-${this.activeSection}`).focus());
+        },
 
         ytdlp_path: 'yt-dlp',
         ytdlp_timeout: 120,
@@ -34,6 +61,10 @@ document.addEventListener('alpine:init', () => {
         invidious_author_thumbnails: false,
 
         feed_fetch_interval: 21600,
+        metadata_sync_enabled: true,
+        metadata_sync_interval_hours: 24,
+        metadata_sync_max_http_per_hour: 150,
+        metadataSyncStatus: null,
         feed_fetch_interval_minutes: 360,
         feed_channel_delay: 2,
         feed_max_videos: 30,
@@ -94,6 +125,9 @@ document.addEventListener('alpine:init', () => {
                 this.invidious_local_streams = settings.invidious_local_streams || false;
                 this.invidious_author_thumbnails = settings.invidious_author_thumbnails || false;
                 this.feed_fetch_interval = settings.feed_fetch_interval || 21600;
+                this.metadata_sync_enabled = settings.metadata_sync_enabled ?? true;
+                this.metadata_sync_interval_hours = settings.metadata_sync_interval_hours ?? 24;
+                this.metadata_sync_max_http_per_hour = settings.metadata_sync_max_http_per_hour ?? 150;
                 this.feed_fetch_interval_minutes = Math.round(this.feed_fetch_interval / 60);
                 this.feed_channel_delay = settings.feed_channel_delay || 2;
                 this.feed_max_videos = settings.feed_max_videos || 30;
@@ -117,6 +151,14 @@ document.addEventListener('alpine:init', () => {
                 console.error('Failed to load settings:', err);
             } finally {
                 this.loading = false;
+            }
+        },
+
+        async loadMetadataSyncStatus() {
+            try {
+                this.metadataSyncStatus = await Alpine.store('api').get('/metadata-sync/status');
+            } catch (err) {
+                // Error handled by API store; retain the last known status.
             }
         },
 
@@ -150,6 +192,9 @@ document.addEventListener('alpine:init', () => {
                     invidious_local_streams: this.invidious_local_streams,
                     invidious_author_thumbnails: this.invidious_author_thumbnails,
                     feed_fetch_interval: (parseInt(this.feed_fetch_interval_minutes) || 30) * 60,
+                    metadata_sync_enabled: this.metadata_sync_enabled,
+                    metadata_sync_interval_hours: this.metadata_sync_interval_hours,
+                    metadata_sync_max_http_per_hour: this.metadata_sync_max_http_per_hour,
                     feed_channel_delay: parseInt(this.feed_channel_delay) || 2,
                     feed_max_videos: parseInt(this.feed_max_videos) || 30,
                     feed_video_max_age: parseInt(this.feed_video_max_age) || 30,

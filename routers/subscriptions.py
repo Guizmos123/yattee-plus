@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 import avatar_cache
 import database
 import feed_fetcher
+from metadata_selection import select_stored_metadata
 from security import is_safe_url_strict
 from ytdlp_wrapper import is_valid_url
 
@@ -214,13 +215,20 @@ async def post_feed(
     for v in videos:
         texts = {}
         if lang is not None and v["site"] == "youtube":
-            for language in dict.fromkeys((lang, "original")):
-                variant = stored_metadata.get((v["video_id"], language), {})
-                if language == "original" and variant.get("source") != "innertube:player":
-                    continue
-                for field in ("title", "description"):
-                    if field not in texts and isinstance(variant.get(field), str):
-                        texts[field] = variant[field]
+            variants = {language: stored_metadata.get((v["video_id"], language), {}) for language in (lang, "original")}
+            # The listing source is known only when its observation still matches.
+            # fetched_at is an acquisition date, not a YouTube title edit date.
+            provider_language = (
+                "en"
+                if any(
+                    row.get("observed_source") == "innertube:browse:en" and row.get("observed_title") == v["title"]
+                    for row in variants.values()
+                )
+                else None
+            )
+            texts = select_stored_metadata(
+                v, lang, variants, provider_language=provider_language, acquired_at=v.get("fetched_at")
+            )
         # Build thumbnail list from stored data
         thumbnails = []
         if v.get("thumbnail_data"):

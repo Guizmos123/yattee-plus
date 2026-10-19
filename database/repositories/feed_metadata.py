@@ -49,6 +49,44 @@ def get_feed_video_metadata(
                 [site, *batch, *selected_languages],
             )
             rows.extend(dict(row) for row in cursor.fetchall())
+            # New observations are exposed only through this internal reader;
+            # public response shapes and the no-lang path remain unchanged.
+            fresh = conn.execute(
+                f"""SELECT * FROM metadata_acquisitions
+                    WHERE site=? AND video_id IN ({video_placeholders})
+                      AND language IN ({language_placeholders})
+                      AND (title_acquired_at IS NOT NULL OR description_acquired_at IS NOT NULL)""",
+                [site, *batch, *selected_languages],
+            ).fetchall()
+            interval = conn.execute("SELECT metadata_sync_interval_hours FROM settings WHERE id=1").fetchone()
+            interval = interval[0] if interval else 24
+            indexed = {(r["video_id"], r["language"]): r for r in rows}
+            for observation in fresh:
+                row = indexed.get((observation["video_id"], observation["language"]))
+                if row is None:
+                    row = {"site": site, "video_id": observation["video_id"], "language": observation["language"]}
+                    rows.append(row)
+                field_metadata = {}
+                for field in ("title", "description"):
+                    acquired = observation[f"{field}_acquired_at"]
+                    if observation[field] is None or acquired is None:
+                        continue
+                    if row.get("checked_at") is not None:
+                        try:
+                            # A later legacy control date wins conservatively;
+                            # neither date is a YouTube modification timestamp.
+                            controlled = datetime.fromisoformat(row["checked_at"])
+                            if controlled.tzinfo is not None and controlled.timestamp() > acquired:
+                                continue
+                        except (ValueError, TypeError):
+                            pass
+                    field_metadata[field] = {
+                        "value": observation[field],
+                        "source": observation[f"{field}_source"],
+                        "acquired_at": datetime.fromtimestamp(acquired, UTC),
+                        "freshness_hours": interval,
+                    }
+                row["_field_metadata"] = field_metadata
     return rows
 
 

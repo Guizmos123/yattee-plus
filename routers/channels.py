@@ -228,7 +228,8 @@ async def get_channel_videos_endpoint(
             data = await innertube.get_channel_videos(channel_id, continuation, **options)
             if data and data.get("videos"):
                 video_items = [
-                    invidious_to_video_list_item(v) for v in _apply_stored_list_metadata(data["videos"], language)
+                    invidious_to_video_list_item(v)
+                    for v in _apply_stored_list_metadata(data["videos"], lang, provider_language=language)
                 ]
                 return ChannelVideosResponse(videos=video_items, continuation=data.get("continuation"))
         except innertube.InnerTubeError as e:
@@ -240,7 +241,10 @@ async def get_channel_videos_endpoint(
                 data = await invidious_proxy.get_channel_videos(channel_id, continuation)
                 if data and "videos" in data:
                     invidious_base = invidious_proxy.get_base_url()
-                    video_items = [invidious_to_video_list_item(v, invidious_base) for v in data["videos"]]
+                    video_items = [
+                        invidious_to_video_list_item(v, invidious_base)
+                        for v in _apply_stored_list_metadata(data["videos"], lang)
+                    ]
                     return ChannelVideosResponse(videos=video_items, continuation=data.get("continuation"))
             except invidious_proxy.InvidiousProxyError:
                 pass
@@ -248,7 +252,9 @@ async def get_channel_videos_endpoint(
         # Fall back to yt-dlp for YouTube
         try:
             videos = await get_channel_videos(channel_id, page)
-            video_items = [ytdlp_to_video_list_item(video) for video in videos]
+            video_items = [
+                ytdlp_to_video_list_item(video) for video in _apply_stored_list_metadata(videos, lang, id_field="id")
+            ]
             continuation = str(page + 1) if video_items else None
             return ChannelVideosResponse(videos=video_items, continuation=continuation)
         except ValueError as e:
@@ -435,6 +441,8 @@ async def get_channel_shorts_endpoint(
             item.isShort = True
         return items
 
+    preference = lang if _is_youtube_channel_id(channel_id) else None
+
     # Try InnerTube first
     try:
         language = lang if lang in ("fr", "en") and _is_youtube_channel_id(channel_id) else None
@@ -442,7 +450,10 @@ async def get_channel_shorts_endpoint(
         data = await innertube.get_channel_shorts(channel_id, continuation, **options)
         if data and data.get("videos"):
             video_items = _tag(
-                [invidious_to_video_list_item(v) for v in _apply_stored_list_metadata(data["videos"], language)]
+                [
+                    invidious_to_video_list_item(v)
+                    for v in _apply_stored_list_metadata(data["videos"], preference, provider_language=language)
+                ]
             )
             return ChannelShortsResponse(videos=video_items, continuation=data.get("continuation"))
     except innertube.InnerTubeError as e:
@@ -454,7 +465,12 @@ async def get_channel_shorts_endpoint(
             data = await invidious_proxy.get_channel_shorts(channel_id, continuation)
             if data and "videos" in data:
                 invidious_base = invidious_proxy.get_base_url()
-                video_items = _tag([invidious_to_video_list_item(v, invidious_base) for v in data["videos"]])
+                video_items = _tag(
+                    [
+                        invidious_to_video_list_item(v, invidious_base)
+                        for v in _apply_stored_list_metadata(data["videos"], preference)
+                    ]
+                )
                 return ChannelShortsResponse(videos=video_items, continuation=data.get("continuation"))
         except invidious_proxy.InvidiousProxyError:
             pass
@@ -463,7 +479,9 @@ async def get_channel_shorts_endpoint(
     try:
         page = int(continuation) if continuation and continuation.isdigit() else 1
         videos = await get_channel_tab(channel_id, "shorts", page)
-        video_items = _tag([ytdlp_to_video_list_item(v) for v in videos])
+        video_items = _tag(
+            [ytdlp_to_video_list_item(v) for v in _apply_stored_list_metadata(videos, preference, id_field="id")]
+        )
         next_continuation = str(page + 1) if video_items else None
         return ChannelShortsResponse(videos=video_items, continuation=next_continuation)
     except ValueError as e:
@@ -545,7 +563,8 @@ async def search_channel_endpoint(
             data = await innertube.search_channel(channel_id, q, page, **options)
             if data and data.get("videos"):
                 video_items = [
-                    invidious_to_video_list_item(v) for v in _apply_stored_list_metadata(data["videos"], language)
+                    invidious_to_video_list_item(v)
+                    for v in _apply_stored_list_metadata(data["videos"], lang, provider_language=language)
                 ]
                 return ChannelSearchResponse(
                     videos=video_items,
@@ -562,7 +581,10 @@ async def search_channel_endpoint(
                 data = await invidious_proxy.search_channel(channel_id, q, page)
                 if data and "videos" in data:
                     invidious_base = invidious_proxy.get_base_url()
-                    video_items = [invidious_to_video_list_item(v, invidious_base) for v in data["videos"]]
+                    video_items = [
+                        invidious_to_video_list_item(v, invidious_base)
+                        for v in _apply_stored_list_metadata(data["videos"], lang)
+                    ]
                     return ChannelSearchResponse(
                         videos=video_items, continuation=str(page + 1) if video_items else None
                     )
@@ -572,7 +594,10 @@ async def search_channel_endpoint(
         # Fall back to yt-dlp for YouTube
         try:
             videos = await ytdlp_search_channel(channel_id, q, page)
-            video_items = [ytdlp_to_video_list_item(video) for video in videos]
+            video_items = [
+                ytdlp_to_video_list_item(video)
+                for video in _apply_stored_list_metadata(videos, lang, id_field="id")
+            ]
             continuation = str(page + 1) if video_items else None
             return ChannelSearchResponse(videos=video_items, continuation=continuation)
         except ValueError as e:

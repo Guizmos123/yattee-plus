@@ -99,6 +99,9 @@ class Settings(BaseModel):
     )
 
     # Feed
+    metadata_sync_enabled: bool = Field(default=True, strict=True)
+    metadata_sync_interval_hours: int = Field(default=24, ge=1, le=72, strict=True)
+    metadata_sync_max_http_per_hour: int = Field(default=150, ge=1, le=10000, strict=True)
     feed_fetch_interval: int = Field(default=21600, ge=300, le=86400)
     feed_channel_delay: int = Field(default=2, ge=1, le=30)
     feed_max_videos: int = Field(default=30, ge=10, le=100)

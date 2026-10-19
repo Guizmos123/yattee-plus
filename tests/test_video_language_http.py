@@ -3,6 +3,7 @@
 import asyncio
 import importlib.util
 import unittest
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -23,13 +24,23 @@ class TestVideoLanguageHTTP(unittest.IsolatedAsyncioTestCase):
 
         self.route = videos
         self.base = VideoResponse(
-            videoId="synthetic01", title="Historical title", description="Historical description, much longer.",
-            descriptionHtml="<p>Historical description</p>", author="Channel name", authorId="UCsynthetic",
-            lengthSeconds=120, extractionMethod="hybrid",
-            adaptiveFormats=[{
-                "url": "https://example.invalid/audio", "itag": "140", "type": "audio/mp4", "container": "m4a",
-                "audioTrack": {"id": "en.4", "displayName": "English (original)", "isDefault": True},
-            }],
+            videoId="synthetic01",
+            title="Historical title",
+            description="Historical description, much longer.",
+            descriptionHtml="<p>Historical description</p>",
+            author="Channel name",
+            authorId="UCsynthetic",
+            lengthSeconds=120,
+            extractionMethod="hybrid",
+            adaptiveFormats=[
+                {
+                    "url": "https://example.invalid/audio",
+                    "itag": "140",
+                    "type": "audio/mp4",
+                    "container": "m4a",
+                    "audioTrack": {"id": "en.4", "displayName": "English (original)", "isDefault": True},
+                }
+            ],
             captions=[{"label": "English", "languageCode": "en", "url": "https://example.invalid/captions"}],
         )
 
@@ -40,6 +51,7 @@ class TestVideoLanguageHTTP(unittest.IsolatedAsyncioTestCase):
             return result
 
         patched("routers.videos.validate_extractor_allowed", return_value=None)
+        self.stored = patched("routers.videos._read_stored_metadata", return_value={})
         patched("routers.videos.get_base_url", return_value="http://testserver")
         patched("routers.videos.get_settings", return_value=SimpleNamespace(invidious_proxy_videos=True))
         patched("routers.videos.get_current_user_from_request", return_value=None)
@@ -47,22 +59,29 @@ class TestVideoLanguageHTTP(unittest.IsolatedAsyncioTestCase):
         patched("routers.videos.avatar_cache.get_cache", return_value=SimpleNamespace(schedule_background_fetch=Mock()))
         self.invidious_enabled = patched("routers.videos.invidious_proxy.is_enabled", return_value=False)
         self.player_next = patched(
-            "routers.videos.innertube.get_video_player_next", new_callable=AsyncMock,
+            "routers.videos.innertube.get_video_player_next",
+            new_callable=AsyncMock,
             side_effect=AssertionError("Unexpected acquisition during HTTP contract tests"),
         )
         patched("routers.videos.innertube.is_enabled", return_value=True)
         self.hybrid = patched("routers.videos._get_video_hybrid", new_callable=AsyncMock, return_value=self.base)
-        self.original = patched(
-            "routers.videos.get_video_original_metadata", new_callable=AsyncMock,
+        self.original = AsyncMock(
             return_value={"title": "Original title", "description": "Original description"},
         )
 
         async def localized(video_id, language):
             return {"title": f"Title {language}", "description": f"Description {language}"}
 
-        self.localized = patched(
-            "routers.videos.get_video_localized_metadata", new_callable=AsyncMock, side_effect=localized
+        self.localized = AsyncMock(side_effect=localized)
+        self.recommendations = patched(
+            "routers.videos.get_video_localized_metadata", new_callable=AsyncMock,
+            return_value={"recommendedVideos": {}},
         )
+
+        async def acquire(video_id, language, provider):
+            return await self.original(video_id) if language == "original" else await self.localized(video_id, language)
+
+        patched("routers.videos._acquire_video_metadata", new_callable=AsyncMock, side_effect=acquire)
         app = FastAPI()
         app.include_router(videos.router, prefix="/api/v1")
         self.http = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver")
@@ -127,7 +146,7 @@ class TestVideoLanguageHTTP(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(data[field], before[field])
         self.assertEqual(self.base.model_dump(mode="json"), before)
 
-    async def test_forced_invidious_ignores_lang_and_never_calls_inner_tube(self):
+    async def test_forced_invidious_uses_local_candidates_and_never_calls_inner_tube(self):
         self.invidious_enabled.return_value = True
         data = self.base.model_dump(mode="json")
         with (
@@ -137,9 +156,24 @@ class TestVideoLanguageHTTP(unittest.IsolatedAsyncioTestCase):
         ):
             for language in ("original", "fr", "en"):
                 with self.subTest(language=language):
+                    self.stored.return_value = {
+                        ("synthetic01", language): {
+                            "source": "innertube:player" if language == "original" else "innertube:next",
+                            "checked_at": datetime.now(UTC).isoformat(),
+                            "title": f"Local {language}",
+                            "description": "<texte>\nsuite",
+                        }
+                    }
                     result = await self.request(lang=language, invidious="true")
                     self.assertEqual(result.status_code, 200)
-                    self.assertEqual(result.json()["title"], "Historical title")
+                    expected = {
+                        **data,
+                        "extractionMethod": "invidious",
+                        "title": f"Local {language}",
+                        "description": "<texte>\nsuite",
+                        "descriptionHtml": "&lt;texte&gt;<br>suite",
+                    }
+                    self.assertEqual(result.json(), expected)
         self.hybrid.assert_not_awaited()
         self.original.assert_not_awaited()
         self.localized.assert_not_awaited()
@@ -151,6 +185,38 @@ class TestVideoLanguageHTTP(unittest.IsolatedAsyncioTestCase):
             result = await self.request(lang="fr")
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.json(), self.base.model_dump(mode="json"))
+
+    async def test_acquisition_failure_uses_local_fields_without_mutating_streams(self):
+        self.stored.return_value = {
+            ("synthetic01", "fr"): {
+                "source": "innertube:next",
+                "checked_at": datetime.now(UTC).isoformat(),
+                "title": None,
+                "description": "Local description",
+            }
+        }
+        self.localized.side_effect = self.route.InnerTubeError("unavailable")
+        with self.assertLogs("routers.videos"):
+            result = await self.request(lang="fr")
+        expected = {
+            **self.base.model_dump(mode="json"),
+            "description": "Local description",
+            "descriptionHtml": "Local description",
+        }
+        self.assertEqual(result.json(), expected)
+
+    async def test_forced_invidious_without_local_fields_keeps_complete_provider_response(self):
+        self.invidious_enabled.return_value = True
+        data = self.base.model_dump(mode="json")
+        with (
+            patch.object(self.route.invidious_proxy, "get_video", new_callable=AsyncMock, return_value=data),
+            patch.object(self.route.invidious_proxy, "get_base_url", return_value="https://invidious.invalid"),
+            patch.object(self.route, "invidious_to_video_response", return_value=self.base),
+        ):
+            result = await self.request(lang="original", invidious="true")
+        self.assertEqual(result.json(), {**data, "extractionMethod": "invidious"})
+        self.original.assert_not_awaited()
+        self.localized.assert_not_awaited()
 
     async def test_simultaneous_languages_are_isolated(self):
         started = asyncio.Event()

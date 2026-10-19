@@ -14,6 +14,8 @@ from fastapi.testclient import TestClient
 
 import database
 import feed_fetcher
+import metadata_selection
+from database.repositories import feed as feed_repository
 from database.repositories import feed_metadata
 from routers import subscriptions
 from settings import Settings
@@ -35,6 +37,8 @@ def isolated_enrichment(monkeypatch):
     Clock.value = NOW
     monkeypatch.setattr(feed_fetcher, "datetime", Clock)
     monkeypatch.setattr(feed_metadata, "datetime", Clock)
+    monkeypatch.setattr(metadata_selection, "datetime", Clock)
+    monkeypatch.setattr(feed_repository, "datetime", Clock)
     monkeypatch.setattr(feed_fetcher, "_metadata_enrichment_running", False)
     monkeypatch.setattr(feed_fetcher, "_metadata_inflight", set())
     monkeypatch.setattr(feed_fetcher, "_METADATA_DELAY", 0)
@@ -88,7 +92,7 @@ def save_variant(
 ):
     values = {
         "source": "innertube:player" if language == "original" else "innertube:next",
-        "checked_at": NOW - timedelta(days=2),
+        "checked_at": NOW,
         "next_check_at": NOW + timedelta(days=1),
         "observed_title": "Historical title",
         "observed_source": LISTING_SOURCE,
@@ -342,7 +346,7 @@ async def test_observation_failure_does_not_invalidate_channel_sync(test_db):
 
 
 @pytest.mark.asyncio
-async def test_loop_enriches_after_sync_and_cleanup_and_survives_enrichment_failure(test_db, monkeypatch):
+async def test_loop_collects_and_cleans_without_running_legacy_enrichment(test_db, monkeypatch):
     events = []
 
     async def sync():
@@ -377,7 +381,6 @@ async def test_loop_enriches_after_sync_and_cleanup_and_survives_enrichment_fail
         "cleanup_old_cached_videos",
         "cleanup_stale_watched_channels",
         "cleanup_orphaned_cached_videos",
-        "enrich",
         "wait",
     ]
     with database.get_connection() as conn:
@@ -464,6 +467,26 @@ def test_feed_reads_multiple_videos_in_one_metadata_batch(feed_client):
     assert response.status_code == 200
     assert len(response.json()["videos"]) == 2
     read.assert_called_once_with(["video", "second"], languages=["fr", "original"])
+
+
+def test_old_feed_variant_keeps_current_title_but_can_supply_missing_description(feed_client):
+    cache_video(title="Current listing")
+    save_variant(title="Old FR", description="Old description", checked_at=NOW - timedelta(days=2))
+    before = variants()
+    row = feed_client.post("/api/v1/feed?lang=fr", json=feed_body()).json()["videos"][0]
+    assert row["title"] == "Current listing" and row["description"] == "Old description"
+    assert variants() == before
+
+
+def test_feed_compares_observations_only_for_matching_listing_intent(feed_client):
+    cache_video(title="New English listing")
+    save_variant(
+        "en", title="Previous English", checked_at=NOW - timedelta(hours=1), observed_title="New English listing"
+    )
+    save_variant("fr", title="Titre FR", checked_at=NOW - timedelta(hours=1), observed_title="New English listing")
+    for language in ("fr", "en"):
+        row = feed_client.post(f"/api/v1/feed?lang={language}", json=feed_body()).json()["videos"][0]
+        assert row["title"] == ("Titre FR" if language == "fr" else "New English listing")
 
 
 def test_metadata_read_error_preserves_a_usable_feed(feed_client):

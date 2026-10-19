@@ -145,6 +145,15 @@ class TestVideoLanguage(unittest.IsolatedAsyncioTestCase):
         sys.modules["database"].get_site_by_extractor = Mock(return_value={"proxy_streaming": False})
         self.route = acquisition_tests._load_module("routers.videos", "routers/videos.py")
 
+        # These isolated route-contract tests keep their existing provider
+        # fixtures. Real shared service/SQLite integration is tested separately.
+        async def acquire(video_id, language, provider):
+            if language == "original":
+                return await self.video.get_video_original_metadata(video_id)
+            return await self.video.get_video_localized_metadata(video_id, language)
+
+        self.route._acquire_video_metadata = AsyncMock(side_effect=acquire)
+
     async def request(self, **query):
         return await self.route.get_video("synthetic01", SimpleNamespace(), **query)
 
@@ -323,11 +332,11 @@ class TestVideoLanguage(unittest.IsolatedAsyncioTestCase):
         baseline = _VideoResponse(**self.base)
         for value in (None, [], {"title": 42, "description": []}):
             with self.subTest(value=value), patch.object(
-                self.route, "get_video_localized_metadata", new_callable=AsyncMock, return_value=value
+                self.route, "_acquire_video_metadata", new_callable=AsyncMock, return_value=value
             ):
                 self.assertIs(await self.route._select_video_metadata(baseline, "synthetic01", "fr"), baseline)
         with patch.object(
-            self.route, "get_video_localized_metadata", new_callable=AsyncMock,
+            self.route, "_acquire_video_metadata", new_callable=AsyncMock,
             side_effect=self.route.InnerTubeError("Simulated helper failure"),
         ), self.assertLogs("routers.videos"):
             self.assertIs(await self.route._select_video_metadata(baseline, "synthetic01", "fr"), baseline)
